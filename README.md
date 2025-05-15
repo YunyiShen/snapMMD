@@ -1,6 +1,4 @@
 # Codebase for Oh SnapMMD! Forecasting stochastic dynamics beyond the Schrödinger bridge's end
-Renato Berlinghieri*, Yunyi Shen*, Jialong Jiang and Tamara Broderick
-*: equal contribution
 ## Structure
 There are three main folders in this repo, `experiments`, `data` and `package`. In the `package` we implmented our method as a python package `snapMMD` to be installed. After installation one can run experiments in `experiments` that depends on files in `data`.
 

@@ -7,6 +7,7 @@ from snapMMD.booleansde import nninputfun
 import sys
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
 
 def get_settings(taskname):
     if "Repressilator" in taskname:
@@ -52,6 +53,7 @@ def main():
     dts = torch.tensor(data['dts']).to(device)
     y0 = torch.tensor(data['y0']).to(device)
     time_scale = data['time_scale']
+    time_scale = torch.tensor(time_scale).to(device)
     lr, epochs, mymodel = get_settings(task_name)
     my_seeds = seeds#[my_task_id:len(seeds):num_tasks]
     for seed in my_seeds:

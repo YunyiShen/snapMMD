@@ -49,7 +49,7 @@ def get_settings(taskname):
 
 
 def main():
-    seeds = [42, 43, 44]
+    seeds = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
     # grab command line arguments 
     #my_task_id = int(sys.argv[1])
     #num_tasks = int(sys.argv[2])

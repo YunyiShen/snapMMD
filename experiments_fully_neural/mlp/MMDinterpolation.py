@@ -32,22 +32,28 @@ def get_data(kind, task_name, seed = 42):
     dts = torch.tensor(data['dts'])
     t_start = dts[0]
     t_end = dts[-2]
-    X0 = torch.tensor(data["Xs"][0])
+    
+    if kind != "missingobs":
+        X_0 = torch.tensor(data["Xs"][0])
+    else:
+        X_0 = torch.tensor(data["Xs"][0])
+        X_0 = torch.concatenate((X_0, torch.tensor(data['y0'])[:X_0.shape[0], X_0.shape[1]:]), dim = 1)
+    #X0 = torch.tensor(data["Xs"][0])
     time_scale = data['time_scale']
     fitted_model = get_model(kind, task_name, seed).float()
     
     #breakpoint()
 
-    return fitted_model, X0, t_start/time_scale, t_end/time_scale 
+    return fitted_model, X_0, t_start/time_scale, t_end/time_scale 
 
 
 
-seeds = [1, 2, 3, 4, 5,  41, 42, 43, 44]
-tasks = [("classic", "Repressilator"),
-         ("classic", "LV"),
-         ("missingobs", "Repressilator"),
-         ("realdata", "GoM"),
-         ("realdata", "pbmc")
+seeds = [1, 2, 3, 4, 5,  40,41, 42, 43, 44]
+tasks = [#("classic", "Repressilator"),
+         #("classic", "LV"),
+         ("missingobs", "Repressilator")#,
+         #("realdata", "GoM"),
+         #("realdata", "pbmc")
          
          ]
 for kind, task_name in tasks:

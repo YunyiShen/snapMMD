@@ -23,15 +23,23 @@ def get_settings(taskname):
     
     return lr, epochs, mymodel
 
-def main():
-    seeds = [41, 42, 43, 44] # [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
+def run(id):
+    #seeds = [41, 42, 43, 44] # [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
     # grab command line arguments 
     #my_task_id = int(sys.argv[1])
     #num_tasks = int(sys.argv[2])
 
     # determine which task to run
-    task_name = sys.argv[1]
-
+    #task_name = sys.argv[1]
+    seedid = id % 10
+    taskid = id // 10
+    seeds = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
+    all_tasks = ["Repressilator"]
+    task_name = all_tasks[taskid]
+    #print(kind, task_name, seeds[seedid])
+    
+    
+    my_seeds = [seeds[seedid]]
     data = np.load(f"../../data/missingobs/{task_name}_data.npz")
     N_steps = data['N_steps']
     Xs =[torch.tensor(data["Xs"][i]).to(device) for i in range(N_steps-1)] # training data
@@ -43,7 +51,7 @@ def main():
     #breakpoint()
     time_scale = torch.tensor(time_scale).to(device)
     lr, epochs, mymodel = get_settings(task_name)
-    my_seeds = seeds#[my_task_id:len(seeds):num_tasks]
+    #my_seeds = seeds#[my_task_id:len(seeds):num_tasks]
     for seed in my_seeds:
         print(f"task {task_name} with seed {seed}")
         # set seed
@@ -65,5 +73,7 @@ def main():
                  forecast = forecast.cpu().detach().numpy(), 
                  X_val = X_val.cpu().detach().numpy())
 
+import fire           
+
 if __name__ == '__main__':
-    main()
+    fire.Fire(run)

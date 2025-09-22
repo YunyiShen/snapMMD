@@ -22,14 +22,22 @@ def get_settings(taskname):
     return lr, epochs, mymodel
 
 
-def main():
+def run(id):
     seeds = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
     # grab command line arguments 
     #my_task_id = int(sys.argv[1])
     #num_tasks = int(sys.argv[2])
-
+    seedid = id % 10
+    taskid = id // 10
+    seeds = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
+    all_tasks = ["LV","Repressilator"]
+    task_name = all_tasks[taskid]
+    print(task_name, seeds[seedid])
+    
+    
+    my_seeds = [seeds[seedid]]
     # determine which task to run
-    task_name = sys.argv[1]
+    #task_name = sys.argv[1]
 
     data = np.load(f"../../data/classic/{task_name}_data.npz")
     N_steps = data['N_steps']
@@ -40,7 +48,7 @@ def main():
     y0 = torch.tensor(data['y0']).to(device)
     time_scale = data['time_scale']
     lr, epochs, mymodel = get_settings(task_name)
-    my_seeds = seeds#[my_task_id:len(seeds):num_tasks]
+    #my_seeds = seeds#[my_task_id:len(seeds):num_tasks]
     for seed in my_seeds:
         print(f"task {task_name} with seed {seed}")
         # set seed
@@ -61,5 +69,8 @@ def main():
                  forecast = forecast.cpu().detach().numpy(), 
                  X_val = X_val.cpu().detach().numpy())
 
+
+import fire           
+
 if __name__ == '__main__':
-    main()
+    fire.Fire(run)

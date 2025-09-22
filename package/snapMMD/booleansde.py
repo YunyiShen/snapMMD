@@ -3,6 +3,42 @@ import torch.nn as nn
 import torchsde
 from tqdm import tqdm
 
+class MLP(nn.Module):
+    def __init__(self, dim, mid=[64]):
+        super().__init__()
+        layers = []
+        prev_dim = dim
+        for m in mid:
+            layers.append(nn.Linear(prev_dim, m))
+            layers.append(nn.ReLU())
+            prev_dim = m
+        layers.append(nn.Linear(prev_dim, dim))  # final layer back to dim
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+class NNdrift(nn.Module):
+    def __init__(self, net, sigma_vec):
+        super().__init__()
+        self.net = net
+        self.preprocesspos = torch.exp
+        self.sigma_vec = nn.Parameter(torch.log(sigma_vec))
+        self.noise_type = "diagonal"
+        self.sde_type = "ito"
+    
+    
+    def f(self, t, y):
+        return self.net(y)
+    
+    def g(self, t, y):
+        
+        sigma = self.preprocesspos(self.sigma_vec)
+        return torch.ones_like(y) * sigma
+        
+
+
+
 ### mrna only boolean SDE
 class mrnabooleansde(nn.Module):
     def __init__(self, m_vec, alpha_vec, l_vec, int_mat, stim_mat,n_vec, 

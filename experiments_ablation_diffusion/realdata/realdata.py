@@ -48,14 +48,16 @@ def get_settings(taskname):
 
 
 
-def main():
+def run(id):
+    seedid = id % 10
+    taskid = id // 10
     seeds = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
-    # grab command line arguments 
-    #my_task_id = int(sys.argv[1])
-    #num_tasks = int(sys.argv[2])
-
-    # determine which task to run
-    task_name = sys.argv[1]
+    all_tasks = ["GoM", "pbmc"]
+    task_name = all_tasks[taskid]
+    #print(kind, task_name, seeds[seedid])
+    
+    
+    my_seeds = [seeds[seedid]]
     if "pbmc" in task_name:
         data = np.load(f"../../data/realdata/processed_pbmc_data_sub500_every_2_until20.npz")
     else:
@@ -90,5 +92,7 @@ def main():
                  forecast = forecast.cpu().detach().numpy(), 
                  X_val = X_val.cpu().detach().numpy())
 
+import fire           
+
 if __name__ == '__main__':
-    main()
+    fire.Fire(run)

@@ -8,7 +8,7 @@
 #SBATCH -e ./logs/repres_%j.err  # File to which STDERR will be written, %j inserts jobid
 #SBATCH --mail-type=END
 #SBATCH --mail-user=yshen99@mit.edu
-#SBATCH --array=0-49  # four jobs (0,1,2,3)
+#SBATCH --array=0-9  # four jobs (0,1,2,3)
 
 module load miniforge/24.3.0-0; 
 conda activate torch

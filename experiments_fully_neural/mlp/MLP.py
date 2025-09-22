@@ -31,11 +31,11 @@ def get_settings(kind, task_name):
 
 def run(id):
     
-    all_tasks = [("classic","Repressilator"),
-        ("classic", "LV"),
-        ("missingobs", "Repressilator"),
-        ("realdata", "GoM"),
-        ("realdata", "pbmc")
+    all_tasks = [#("classic","Repressilator"),
+        #("classic", "LV"),
+        ("missingobs", "Repressilator")#,
+        #("realdata", "GoM"),
+        #("realdata", "pbmc")
     ]
     
     seedid = id % 10
@@ -77,8 +77,10 @@ def run(id):
         myMMD = MMDLoss(kernel = rbf).to(device)
 
         myDLS.train(myMMD, y0.to(device), epochs = epochs, adaptive_bandwidth = False)
-
-        X_0 = Xs[0]
+        if kind != "missingobs":
+            X_0 = Xs[0]
+        else:
+            X_0 = torch.concatenate((X_0, y0[:X_0.shape[0], X_0.shape[1]:]), dim = 1)
         forecast = torchsde.sdeint(mymodel, X_0.to(device), torch.tensor([0, dts[-1]/time_scale]).to(device).float(), 
                            method='euler')
 

@@ -31,11 +31,11 @@ def get_settings(kind, task_name):
 
 def run(id):
     
-    all_tasks = [#("classic","Repressilator"),
-        #("classic", "LV"),
+    all_tasks = [("classic","Repressilator"),
+        ("classic", "LV"),
         ("missingobs", "Repressilator")#,
-        #("realdata", "GoM"),
-        #("realdata", "pbmc")
+        ("realdata", "GoM"),
+        ("realdata", "pbmc")
     ]
     
     seedid = id % 10

@@ -29,11 +29,11 @@ def get_settings(kind, task_name):
     return lr, epochs, mymodel
 
 
-def run(id):
+def run(id): # id translate to task and seed
     
     all_tasks = [("classic","Repressilator"),
         ("classic", "LV"),
-        ("missingobs", "Repressilator")#,
+        ("missingobs", "Repressilator"),
         ("realdata", "GoM"),
         ("realdata", "pbmc")
     ]

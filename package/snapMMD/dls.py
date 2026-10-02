@@ -45,7 +45,36 @@ class MMDLoss(nn.Module):
         XY = K[:X_size, X_size:].mean()
         YY = K[X_size:, X_size:].mean()
         return XX - 2 * XY + YY
-    
+
+
+def median_bandwidth(X):
+    '''
+    median heuristic: median squared distance between distinct points of X
+    '''
+    L2_distances = torch.cdist(X, X) ** 2
+    idx = torch.triu_indices(X.shape[0], X.shape[0], offset=1)
+    return torch.median(L2_distances[idx[0], idx[1]])
+
+
+def evaluation_mmd(X_true, X_model, bandwidth = None):
+    '''
+    evaluation metric: squared MMD (V-statistic) between a true snapshot and a model snapshot,
+    with a single RBF kernel exp(-|x - y|^2 / bandwidth)
+    X_true: samples of the true snapshot, (n, d)
+    X_model: samples of the model at the same time, (m, d)
+    bandwidth: kernel bandwidth; if None, the median heuristic on the true snapshot,
+        so that it does not depend on the model being evaluated
+    '''
+    X_true = X_true.double()
+    X_model = X_model.double()
+    if bandwidth is None:
+        bandwidth = median_bandwidth(X_true)
+    XX = torch.exp(-torch.cdist(X_true, X_true) ** 2 / bandwidth).mean()
+    XY = torch.exp(-torch.cdist(X_true, X_model) ** 2 / bandwidth).mean()
+    YY = torch.exp(-torch.cdist(X_model, X_model) ** 2 / bandwidth).mean()
+    return XX - 2 * XY + YY
+
+
 class snapMMD:
     def __init__(self, sde, marginals, dts, bm = None, method='euler', 
                  optimizer = None, lr = None):

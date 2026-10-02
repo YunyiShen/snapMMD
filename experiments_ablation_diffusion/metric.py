@@ -1,7 +1,6 @@
-from dls.dls import MMDLoss, DLS, RBF
+from snapMMD.dls import evaluation_mmd
 import numpy as np
 import torch
-from TrajectoryNet.optimal_transport.emd import earth_mover_distance
 import os
 
 
@@ -17,15 +16,11 @@ def get_metric(kind, task_name, seed = 42):
             data = np.load(f"../data/{kind}/{task_name}_data.npz")
     X_val = data["Xs"][-1] # forecasting target
     if os.path.exists(f"./{kind}/forecasts/{task_name}_forecast_{seed}.npz"):
-        rbf = RBF(bandwidth = 1.)
-        myMMD = MMDLoss(kernel = rbf)
         forecast = np.load(f"./{kind}/forecasts/{task_name}_forecast_{seed}.npz")['forecast'][-1]
-        #breakpoint()
         if kind == "missingobs":
-            #breakpoint()
             forecast = forecast[:, :forecast.shape[-1]//2]
-        #breakpoint()
-        return myMMD(torch.tensor(X_val), torch.clamp(torch.tensor(forecast), -1e8, 1e8)).cpu().numpy().item()
+        # squared MMD, single RBF kernel, bandwidth by the median heuristic on the true snapshot; no clamping
+        return evaluation_mmd(torch.tensor(X_val), torch.tensor(forecast)).cpu().numpy().item()
     return None
 
 seeds = [1, 2, 3, 4, 5, 40, 42, 43, 44, 41]

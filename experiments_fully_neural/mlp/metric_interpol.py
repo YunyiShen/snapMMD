@@ -1,4 +1,4 @@
-from snapMMD.dls import MMDLoss, RBF
+from snapMMD.dls import evaluation_mmd
 import numpy as np
 import torch
 import os
@@ -16,8 +16,6 @@ def get_metric(kind, task_name, seed = 42):
             data = np.load(f"../../data/{kind}/{task_name}_data_interp_val.npz")
     X_val = data["Xs"] # interpolationing target
     if os.path.exists(f"./interpolation/{kind}_{task_name}_interpolation_{seed}.npz"):
-        rbf = RBF(bandwidth = 1.)
-        myMMD = MMDLoss(kernel = rbf)
         # full trajectory, shape (n_steps, n_particles, dim)
         interpolation = np.load(f"./interpolation/{kind}_{task_name}_interpolation_{seed}.npz")['interpolation']
         if kind == "missingobs":
@@ -27,7 +25,8 @@ def get_metric(kind, task_name, seed = 42):
         n_val = X_val.shape[0]
         points = np.linspace(0, interpolation.shape[0] - 1, n_val + 1, dtype=int)
         idx = (points[1:] + points[:-1]) // 2
-        metric = np.array([myMMD(torch.tensor(X_val[i]), 
+        # squared MMD, single RBF kernel, bandwidth by the median heuristic on the true snapshot
+        metric = np.array([evaluation_mmd(torch.tensor(X_val[i]), 
                       torch.tensor(interpolation[idx[i]])).cpu().numpy().item()
                 for i in range(n_val)
                 ])

@@ -1,0 +1,1 @@
+scNODE (MIT) vendored from github.com/rsinghlab/scNODE: model/layer.py, model/diff_solver.py, model/dynamic_model.py, optim/running.py, optim/loss_func.py unmodified; benchmark/BenchmarkUtils.py reduced to sampleGaussian.

@@ -1,0 +1,23 @@
+\begin{table}[!ht]
+    \centering
+    \caption{Forecast MMD$^2$ and EMD on the PBMC dataset (mean $\pm$ standard deviation over 10 seeds; \cref{app:evaluation-metric}). For reference, the EMD between two random halves of the target snapshot is 0.79.}
+    \begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Method} & Forecast-MMD$^2$ & Forecast-EMD \\
+\midrule
+\textbf{Ours} & \ms{0.007}{0.002} & \ms{0.91}{0.16} \\
+\texttt{SBIRR-ref} & \ms{0.087}{0.048} & \ms{1.30}{0.11} \\
+\texttt{SB-forward} & \ms{0.437}{0.154} & \ms{1.99}{0.27} \\
+\texttt{PRESCIENT} & \ms{0.065}{0.016} & \ms{1.38}{0.085} \\
+\texttt{PI-SDE} & \ms{0.036}{0.015} & \ms{1.00}{0.056} \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{0.016}{0.001} & \ms{0.96}{0.015} \\
+\texttt{scNODE} & \ms{0.047}{0.005} & \ms{1.10}{0.023} \\
+\texttt{JKOnet*} & \ms{0.508}{0.000} & \ms{126.67}{7.72} \\
+Persistence & \cellcolor{green!25}\textbf{0.006} & \cellcolor{green!25}\textbf{0.79} \\
+\texttt{SBIRR-ref} (last snapshot) & \ms{0.006}{0.000} & \ms{0.80}{0.0024} \\
+\texttt{SB-forward} (last snapshot) & \ms{0.011}{0.002} & \ms{0.81}{0.0049} \\
+\bottomrule
+\end{tabular}
+
+    \label{tab:repr-pbmc}
+\end{table}

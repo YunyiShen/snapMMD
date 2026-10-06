@@ -1,0 +1,49 @@
+\begin{table}[ht]
+\centering
+\caption{MMD$^2$ at each validation point for Gulf of Mexico.}
+\label{tab:gom-mmd}
+{\scriptsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textbf{Time} & \textbf{0.5} & \textbf{1.5} & \textbf{2.5} & \textbf{3.5} & \textbf{4.5} \\
+\midrule
+\textbf{Ours} & \ms{0.254}{0.008} & \ms{0.521}{0.015} & \greencell{\ms{0.160}{0.011}} & \ms{0.176}{0.022} & \ms{0.551}{0.022} \\
+\texttt{SBIRR} & \ms{0.132}{0.076} & \best{\ms{0.093}{0.039}} & \best{\ms{0.105}{0.064}} & \best{\ms{0.069}{0.051}} & \best{\ms{0.079}{0.038}} \\
+\texttt{DMSB} & \best{\ms{0.079}{0.047}} & \ms{0.273}{0.045} & \greencell{\ms{0.119}{0.045}} & \ms{0.142}{0.037} & \ms{0.177}{0.053} \\
+\texttt{OT-CFM} & \ms{0.321}{0.017} & \ms{0.602}{0.043} & \ms{0.951}{0.041} & \ms{1.084}{0.028} & \ms{0.987}{0.026} \\
+\texttt{SB-CFM} & \ms{0.265}{0.030} & \ms{0.386}{0.084} & \ms{0.532}{0.113} & \ms{0.599}{0.109} & \ms{0.528}{0.094} \\
+\texttt{SF2M} & \ms{0.217}{0.026} & \ms{0.346}{0.025} & \ms{0.537}{0.011} & \ms{0.666}{0.021} & \ms{0.613}{0.028} \\
+\texttt{PRESCIENT} & \ms{0.440}{0.008} & \ms{0.450}{0.007} & \ms{0.464}{0.012} & \ms{0.487}{0.016} & \ms{0.460}{0.012} \\
+\texttt{PI-SDE} & \ms{0.206}{0.049} & \greencell{\ms{0.128}{0.033}} & \greencell{\ms{0.164}{0.057}} & \ms{0.130}{0.021} & \greencell{\ms{0.092}{0.040}} \\
+\texttt{PI-SDE} (learned $\sigma$) & \greencell{\ms{0.111}{0.036}} & \ms{0.211}{0.029} & \ms{0.466}{0.041} & \ms{0.392}{0.040} & \ms{0.376}{0.044} \\
+\texttt{scNODE} & \ms{0.837}{0.145} & \ms{0.883}{0.127} & \ms{0.950}{0.086} & \ms{1.011}{0.059} & \ms{0.898}{0.109} \\
+\texttt{JKOnet*} & \ms{0.625}{0.210} & \ms{0.522}{0.157} & \ms{0.498}{0.107} & \ms{0.523}{0.152} & \ms{0.493}{0.115} \\
+\texttt{JKOnet*} (full) & \ms{0.572}{0.079} & \ms{0.490}{0.031} & \ms{0.501}{0.048} & \ms{0.513}{0.077} & \ms{0.482}{0.068} \\
+Persistence & 0.852 & 0.877 & 0.921 & 0.875 & 0.790 \\
+OT midpoint & 0.345 & 0.457 & 0.619 & 0.405 & 0.293 \\
+\bottomrule
+\end{tabular}
+\par\medskip
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Time} & \textbf{5.5} & \textbf{6.5} & \textbf{7.5} & \textbf{8.5} \\
+\midrule
+\textbf{Ours} & \ms{0.414}{0.023} & \greencell{\ms{0.064}{0.011}} & \ms{0.131}{0.015} & \ms{0.133}{0.013} \\
+\texttt{SBIRR} & \best{\ms{0.105}{0.030}} & \best{\ms{0.041}{0.024}} & \ms{0.027}{0.011} & \ms{0.032}{0.010} \\
+\texttt{DMSB} & \ms{0.145}{0.060} & \ms{0.177}{0.107} & \ms{0.136}{0.104} & \ms{0.059}{0.033} \\
+\texttt{OT-CFM} & \ms{1.032}{0.014} & \ms{1.084}{0.016} & \ms{1.028}{0.100} & \ms{0.850}{0.128} \\
+\texttt{SB-CFM} & \ms{0.585}{0.061} & \ms{0.618}{0.072} & \ms{0.606}{0.129} & \ms{0.498}{0.130} \\
+\texttt{SF2M} & \ms{0.664}{0.018} & \ms{0.682}{0.021} & \ms{0.617}{0.032} & \ms{0.443}{0.021} \\
+\texttt{PRESCIENT} & \ms{0.471}{0.013} & \ms{0.506}{0.023} & \ms{0.583}{0.039} & \ms{0.570}{0.036} \\
+\texttt{PI-SDE} & \greencell{\ms{0.108}{0.033}} & \ms{0.075}{0.034} & \ms{0.105}{0.030} & \ms{0.088}{0.035} \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{0.455}{0.062} & \ms{0.117}{0.030} & \ms{0.073}{0.019} & \ms{0.085}{0.022} \\
+\texttt{scNODE} & \ms{0.958}{0.079} & \ms{1.094}{0.072} & \ms{1.229}{0.072} & \ms{1.214}{0.079} \\
+\texttt{JKOnet*} & \ms{0.494}{0.114} & \ms{0.518}{0.167} & \ms{0.554}{0.204} & \ms{0.552}{0.206} \\
+\texttt{JKOnet*} (full) & \ms{0.494}{0.080} & \ms{0.509}{0.112} & \ms{0.561}{0.159} & \ms{0.556}{0.167} \\
+Persistence & 0.810 & 0.801 & 0.528 & 0.285 \\
+OT midpoint & 0.290 & \greencell{0.041} & \best{0.020} & \best{0.007} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}

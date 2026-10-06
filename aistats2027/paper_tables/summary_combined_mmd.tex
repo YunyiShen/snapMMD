@@ -1,0 +1,21 @@
+\begin{table*}[t]
+\centering
+\caption{MMD$^2$ for the forecasting task, mean $\pm$ standard deviation over 10 random seeds. Rows are methods, columns tasks; best in bold green, within one standard deviation of the best in green; every baseline is described in \cref{app:forecasting-baselines}; methods without a model family share their fits across the two repressilator columns.}
+\label{tab:mmd_main_text}
+{\normalsize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Method} & \textbf{LV} & \textbf{ReprParam} & \textbf{ReprSemiparam} & \textbf{ReprProtein} & \textbf{GoM} & \textbf{PBMC} \\
+\midrule
+\textbf{Ours} & \best{\ms{0.016}{0.008}} & \best{\ms{0.024}{0.029}} & \best{\ms{0.074}{0.050}} & \best{\ms{0.005}{0.003}} & \ms{0.483}{0.018} & \best{\ms{0.007}{0.002}} \\
+\texttt{SBIRR-ref} & \ms{0.136}{0.019} & \ms{0.359}{0.203} & \ms{0.277}{0.100} & \ms{0.720}{0.017} & \best{\ms{0.373}{0.013}} & \ms{0.087}{0.048} \\
+\texttt{SB-forward} & \ms{0.453}{0.254} & \ms{0.407}{0.122} & \ms{0.947}{0.258} & \ms{0.678}{0.035} & \ms{0.455}{0.007} & \ms{0.437}{0.154} \\
+\texttt{PRESCIENT} & \ms{0.624}{0.045} & \ms{1.089}{0.036} & \ms{1.089}{0.036} & \ms{0.678}{0.018} & \ms{0.592}{0.040} & \ms{0.065}{0.016} \\
+\texttt{PI-SDE} & \ms{1.257}{0.046} & \ms{1.375}{0.013} & \ms{1.375}{0.013} & \ms{1.271}{0.027} & \ms{0.863}{0.089} & \ms{0.036}{0.015} \\
+\texttt{scNODE} & \ms{1.168}{0.179} & \ms{1.277}{0.129} & \ms{1.277}{0.129} & \ms{1.087}{0.216} & \ms{1.244}{0.067} & \ms{0.047}{0.005} \\
+\texttt{JKOnet*} & \ms{0.875}{0.231} & \ms{1.154}{0.192} & \ms{1.154}{0.192} & \ms{1.207}{0.188} & \ms{0.522}{0.111} & \ms{0.508}{0.000} \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}

@@ -1,0 +1,24 @@
+\begin{table}[ht]
+    \centering
+    \caption{Forecast MMD$^2$, forecast EMD and drift MSE for the repressilator with the parametric model family (mean $\pm$ standard deviation over 10 seeds). The drift MSE is computed on a grid.}
+    \begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Method} & Forecast-MMD$^2$ & Forecast-EMD & Drift MSE \\
+\midrule
+\textbf{Ours} & \cellcolor{green!25}\textbf{\ms{0.024}{0.029}} & \cellcolor{green!25}\textbf{\ms{0.22}{0.12}} & \cellcolor{green!25}\textbf{\ms{0.0027}{0.0011}} \\
+\texttt{SBIRR-ref} & \ms{0.359}{0.203} & \ms{1.55}{0.79} & \ms{1.71}{0.20} \\
+\texttt{SB-forward} & \ms{0.407}{0.122} & \ms{1.39}{0.63} & \ms{12.9}{0.21} \\
+\texttt{PRESCIENT} & \ms{1.089}{0.036} & \ms{2.37}{0.024} & -- \\
+\texttt{PI-SDE} & \ms{1.375}{0.013} & \ms{5.00}{0.18} & -- \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{1.353}{0.046} & \ms{5.11}{0.29} & -- \\
+\texttt{scNODE} & \ms{1.277}{0.129} & \ms{2.81}{0.80} & -- \\
+\texttt{JKOnet*} & \ms{1.154}{0.192} & \ms{40.41}{6.83} & -- \\
+\texttt{JKOnet*} (full) & \ms{0.961}{0.277} & \ms{35.95}{6.02} & -- \\
+Persistence & 1.161 & 3.58 & -- \\
+\texttt{SBIRR-ref} (last snapshot) & \cellcolor{green!25}\ms{0.033}{0.006} & \cellcolor{green!25}\ms{0.33}{0.029} & -- \\
+\texttt{SB-forward} (last snapshot) & \ms{0.969}{0.017} & \ms{3.45}{0.049} & -- \\
+\bottomrule
+\end{tabular}
+    
+    \label{tab:repr-param}
+\end{table}

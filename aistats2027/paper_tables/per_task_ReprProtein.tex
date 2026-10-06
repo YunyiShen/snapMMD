@@ -1,0 +1,24 @@
+\begin{table}[!ht]
+    \centering
+    \caption{Forecast MMD$^2$ and forecast EMD for the mRNA--protein repressilator (mean $\pm$ standard deviation over 10 seeds).}
+    \begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Method} & Forecast-MMD$^2$ & Forecast-EMD \\
+\midrule
+\textbf{Ours} & \cellcolor{green!25}\textbf{\ms{0.005}{0.003}} & \cellcolor{green!25}\textbf{\ms{0.23}{0.035}} \\
+\textbf{Ours} (mRNA-only model) & \ms{0.594}{0.019} & \ms{1.75}{0.03} \\
+\texttt{SBIRR-ref} & \ms{0.720}{0.017} & \ms{6.36}{0.51} \\
+\texttt{SB-forward} & \ms{0.678}{0.035} & \ms{7.24}{0.48} \\
+\texttt{PRESCIENT} & \ms{0.678}{0.018} & \ms{3.59}{0.11} \\
+\texttt{PI-SDE} & \ms{1.271}{0.027} & \ms{3.75}{0.13} \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{1.234}{0.035} & \ms{3.79}{0.064} \\
+\texttt{scNODE} & \ms{1.087}{0.216} & \ms{4.40}{0.29} \\
+\texttt{JKOnet*} & \ms{1.207}{0.188} & \ms{56.83}{15.90} \\
+\texttt{JKOnet*} (full) & \ms{0.811}{0.324} & \ms{26.23}{3.83} \\
+Persistence & 0.933 & 2.63 \\
+\texttt{SBIRR-ref} (last snapshot) & \ms{0.258}{0.022} & \ms{1.03}{0.027} \\
+\texttt{SB-forward} (last snapshot) & \ms{0.453}{0.034} & \ms{1.89}{0.095} \\
+\bottomrule
+\end{tabular}
+    \label{tab:mlp_repres_missing}
+\end{table}

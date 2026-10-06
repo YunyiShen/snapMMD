@@ -1,0 +1,45 @@
+\begin{table}[!ht]
+\caption{EMD for the forecast (top) and interpolation (bottom) tasks.  Bold green = best method; plain green = method whose mean lies within one standard deviation of the best method. Rows are methods, columns tasks; every baseline is described in \cref{app:forecasting-baselines}. Methods without a model family have the same fits in the ReprParam and ReprSemiparam columns. On PBMC every method but two is within a factor of two of the sampling floor of the EMD; see \cref{app:evaluation-metric}.}
+\centering
+{\scriptsize
+\setlength{\tabcolsep}{3pt}
+\textbf{Forecast}\par\smallskip
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Method} & \textbf{LV} & \textbf{ReprParam} & \textbf{ReprSemiparam} & \textbf{ReprProtein} & \textbf{GoM} & \textbf{PBMC} \\
+\midrule
+\textbf{Ours} & \best{\ms{0.220}{0.037}} & \best{\ms{0.221}{0.125}} & \best{\ms{0.331}{0.118}} & \best{\ms{0.231}{0.035}} & \ms{0.693}{0.024} & \ms{0.911}{0.160} \\
+\texttt{SBIRR-ref} & \ms{0.788}{0.053} & \ms{1.548}{0.793} & \ms{1.181}{0.443} & \ms{6.356}{0.514} & \ms{0.892}{0.034} & \ms{1.300}{0.112} \\
+\texttt{SB-forward} & \ms{1.820}{0.940} & \ms{1.387}{0.628} & \ms{3.010}{1.162} & \ms{7.243}{0.479} & \ms{0.938}{0.081} & \ms{1.992}{0.274} \\
+\texttt{PRESCIENT} & \ms{3.283}{0.209} & \ms{2.371}{0.024} & \ms{2.371}{0.024} & \ms{3.593}{0.105} & \ms{1.117}{0.028} & \ms{1.383}{0.085} \\
+\texttt{PI-SDE} & \ms{4.046}{0.096} & \ms{5.000}{0.177} & \ms{5.000}{0.177} & \ms{3.747}{0.132} & \ms{0.418}{0.033} & \ms{0.996}{0.056} \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{3.916}{0.069} & \ms{5.111}{0.293} & \ms{5.111}{0.293} & \ms{3.790}{0.064} & \ms{0.387}{0.013} & \ms{0.958}{0.015} \\
+\texttt{scNODE} & \ms{2.827}{0.195} & \ms{2.806}{0.798} & \ms{2.806}{0.798} & \ms{4.396}{0.287} & \ms{1.045}{0.031} & \ms{1.101}{0.023} \\
+\texttt{JKOnet*} & \ms{29.672}{21.874} & \ms{40.414}{6.833} & \ms{40.414}{6.833} & \ms{56.831}{15.902} & \ms{4.515}{2.065} & \ms{126.671}{7.718} \\
+\texttt{JKOnet*} (full) & \ms{31.144}{22.851} & \ms{35.951}{6.016} & \ms{35.951}{6.016} & \ms{26.228}{3.833} & \ms{5.797}{6.051} & -- \\
+Persistence & 2.510 & 3.576 & 3.576 & 2.626 & \best{0.206} & \best{0.795} \\
+\texttt{SBIRR-ref} (last snapshot) & \ms{0.424}{0.023} & \greencell{\ms{0.326}{0.029}} & \ms{1.526}{1.078} & \ms{1.029}{0.027} & \ms{0.332}{0.008} & \ms{0.795}{0.002} \\
+\texttt{SB-forward} (last snapshot) & \ms{0.685}{0.376} & \ms{3.453}{0.049} & \ms{3.601}{0.050} & \ms{1.889}{0.095} & \ms{0.656}{0.099} & \ms{0.809}{0.005} \\
+\bottomrule
+\end{tabular}
+\par\medskip\textbf{Interpolation}\par\smallskip
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Method} & \textbf{LV} & \textbf{ReprParam} & \textbf{ReprSemiparam} & \textbf{ReprProtein} & \textbf{GoM} & \textbf{PBMC} \\
+\midrule
+\textbf{Ours} & \best{\ms{0.060}{0.030}} & \best{\ms{0.102}{0.057}} & \best{\ms{0.238}{0.109}} & \best{\ms{0.094}{0.036}} & \ms{0.103}{0.040} & \ms{0.867}{0.100} \\
+\texttt{SBIRR} & \ms{0.096}{0.075} & \ms{0.168}{0.057} & \ms{0.394}{0.136} & \ms{0.591}{0.783} & \best{\ms{0.043}{0.012}} & \greencell{\ms{0.769}{0.108}} \\
+\texttt{DMSB} & \ms{0.819}{0.559} & \ms{1.887}{0.865} & \ms{1.887}{0.865} & \ms{1.480}{1.011} & \ms{0.078}{0.037} & \ms{82.753}{48.140} \\
+\texttt{PRESCIENT} & \ms{1.064}{0.353} & \ms{1.950}{0.478} & \ms{1.950}{0.478} & \ms{2.257}{0.735} & \ms{0.879}{0.109} & \ms{1.361}{0.074} \\
+\texttt{PI-SDE} & \ms{0.155}{0.125} & \ms{0.459}{0.153} & \ms{0.459}{0.153} & \ms{0.560}{0.703} & \ms{0.064}{0.024} & \ms{0.997}{0.096} \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{0.186}{0.102} & \ms{0.566}{0.178} & \ms{0.566}{0.178} & \ms{0.586}{0.715} & \ms{0.066}{0.023} & \ms{1.001}{0.135} \\
+\texttt{scNODE} & \ms{2.004}{0.863} & \ms{1.868}{0.545} & \ms{1.868}{0.545} & \ms{2.039}{0.881} & \ms{0.854}{0.126} & \ms{1.127}{0.120} \\
+\texttt{JKOnet*} & \ms{15.613}{9.182} & \ms{20.799}{9.693} & \ms{20.799}{9.693} & \ms{26.724}{15.718} & \ms{3.158}{1.450} & \ms{45.430}{37.525} \\
+\texttt{JKOnet*} (full) & \ms{15.975}{10.498} & \ms{18.396}{8.591} & \ms{18.396}{8.591} & \ms{15.181}{5.524} & \ms{3.672}{3.348} & -- \\
+Persistence & \ms{0.722}{0.366} & \ms{1.496}{0.358} & \ms{1.496}{0.358} & \ms{1.307}{1.096} & \ms{0.277}{0.064} & \greencell{\ms{0.763}{0.154}} \\
+OT midpoint & \ms{0.131}{0.092} & \ms{0.598}{0.252} & \ms{0.598}{0.252} & \ms{0.505}{0.797} & \ms{0.056}{0.020} & \best{\ms{0.683}{0.110}} \\
+\bottomrule
+\end{tabular}
+}
+\label{tab:emd_combined}
+\end{table}

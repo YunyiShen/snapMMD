@@ -1,0 +1,24 @@
+\begin{table}[!ht]
+    \caption{Forecast MMD$^2$, forecast EMD and drift MSE for the Gulf of Mexico (mean $\pm$ standard deviation over 10 seeds). The drift MSE is computed on a grid.}
+    \centering
+    \begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Method} & Forecast-MMD$^2$ & Forecast-EMD & Drift MSE \\
+\midrule
+\textbf{Ours} & \ms{0.483}{0.018} & \ms{0.69}{0.024} & \ms{0.054}{$7.1\times 10^{-5}$} \\
+\texttt{SBIRR-ref} & \cellcolor{green!25}\textbf{\ms{0.373}{0.013}} & \ms{0.89}{0.034} & \cellcolor{green!25}\textbf{\ms{0.031}{0.00032}} \\
+\texttt{SB-forward} & \ms{0.455}{0.007} & \ms{0.94}{0.081} & \ms{0.15}{0.023} \\
+\texttt{PRESCIENT} & \ms{0.592}{0.040} & \ms{1.12}{0.028} & -- \\
+\texttt{PI-SDE} & \ms{0.863}{0.089} & \ms{0.42}{0.033} & -- \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{0.576}{0.031} & \ms{0.39}{0.013} & -- \\
+\texttt{scNODE} & \ms{1.244}{0.067} & \ms{1.05}{0.031} & -- \\
+\texttt{JKOnet*} & \ms{0.522}{0.111} & \ms{4.52}{2.07} & -- \\
+\texttt{JKOnet*} (full) & \ms{0.561}{0.193} & \ms{5.80}{6.05} & -- \\
+Persistence & 0.404 & \cellcolor{green!25}\textbf{0.21} & -- \\
+\texttt{SBIRR-ref} (last snapshot) & \ms{0.470}{0.012} & \ms{0.33}{0.0075} & -- \\
+\texttt{SB-forward} (last snapshot) & \ms{0.570}{0.012} & \ms{0.66}{0.099} & -- \\
+\bottomrule
+\end{tabular}
+
+    \label{tab:GoM}
+\end{table}

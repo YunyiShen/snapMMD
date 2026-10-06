@@ -98,7 +98,7 @@ class snapMMD:
             optimizer = torch.optim.Adam(sde.parameters(), lr = lr)
         self.optimizer = optimizer
 
-    def train(self, MMD,y0 = None,epochs = 10, weights = None, obsdims = None, adaptive_bandwidth = False, frozen_step = None, trim = None):
+    def train(self, MMD,y0 = None,epochs = 10, weights = None, obsdims = None, adaptive_bandwidth = False, frozen_step = None, trim = None, gradclip = None):
         if y0 is None:
             y0 = self.marginals[0]
         if obsdims is None:
@@ -178,4 +178,6 @@ class snapMMD:
             self.optimizer.zero_grad()
         # Backward pass
             loss.backward(retain_graph=False)
+            if gradclip is not None:   # gradient-norm clipping (PBMC and fully neural fits of the paper use 1.0)
+                torch.nn.utils.clip_grad_norm_(self.sde.parameters(), max_norm=gradclip)
             self.optimizer.step()

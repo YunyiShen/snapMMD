@@ -1,0 +1,23 @@
+\begin{table}[ht]
+    \centering
+    \caption{Forecast MMD$^2$, forecast EMD and drift MSE for Lotka--Volterra (mean $\pm$ standard deviation over 10 seeds). The drift MSE is computed on a grid.}
+    \begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Method} & Forecast-MMD$^2$ & Forecast-EMD & Drift MSE \\
+\midrule
+\textbf{Ours} & \cellcolor{green!25}\textbf{\ms{0.016}{0.008}} & \cellcolor{green!25}\textbf{\ms{0.22}{0.037}} & \cellcolor{green!25}\textbf{\ms{0.00054}{0.00026}} \\
+\texttt{SBIRR-ref} & \ms{0.136}{0.019} & \ms{0.79}{0.053} & \ms{0.079}{0.0080} \\
+\texttt{SB-forward} & \ms{0.453}{0.254} & \ms{1.82}{0.94} & \ms{0.59}{0.13} \\
+\texttt{PRESCIENT} & \ms{0.624}{0.045} & \ms{3.28}{0.21} & -- \\
+\texttt{PI-SDE} & \ms{1.257}{0.046} & \ms{4.05}{0.096} & -- \\
+\texttt{PI-SDE} (learned $\sigma$) & \ms{0.935}{0.023} & \ms{3.92}{0.069} & -- \\
+\texttt{scNODE} & \ms{1.168}{0.179} & \ms{2.83}{0.19} & -- \\
+\texttt{JKOnet*} & \ms{0.875}{0.231} & \ms{29.67}{21.87} & -- \\
+\texttt{JKOnet*} (full) & \ms{1.261}{0.204} & \ms{31.14}{22.85} & -- \\
+Persistence & 0.864 & 2.51 & -- \\
+\texttt{SBIRR-ref} (last snapshot) & \ms{0.166}{0.017} & \ms{0.42}{0.023} & -- \\
+\texttt{SB-forward} (last snapshot) & \ms{0.304}{0.246} & \ms{0.68}{0.38} & -- \\
+\bottomrule
+\end{tabular}
+    \label{tab:lv}
+\end{table}

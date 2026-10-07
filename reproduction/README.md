@@ -1,11 +1,11 @@
-# Reproducing the AISTATS 2027 paper
+# Reproducing the paper
 
 This folder reproduces every table and the computed figures of the paper *Oh SnapMMD! Forecasting Stochastic Dynamics Beyond the Schrödinger Bridge's End* from the shipped checkpoints and outputs, and contains the scripts that trained every model. It uses the `snapMMD` package (`../package`) and the released data (`../data`) of this repository.
 
 ## Quick start (laptop, about 20 minutes on a recent multicore machine, no training)
 
 ```bash
-conda env create -f environment.yml && conda activate snapmmd-aistats2027
+conda env create -f environment.yml && conda activate snapmmd-reproduction
 cd code
 python simulate.py     # forecasts, paths at the validation times and R^2 from the checkpoints -> generated/ (option --seeds; R^2 only with all seeds)
 python sanity.py       # persistence and OT-midpoint baselines -> generated/

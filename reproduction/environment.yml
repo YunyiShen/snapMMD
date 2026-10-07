@@ -1,5 +1,5 @@
 # Environment used to produce every number and figure of the paper from the shipped checkpoints and outputs.
-name: snapmmd-aistats2027
+name: snapmmd-reproduction
 channels: [pytorch, conda-forge, defaults]
 dependencies:
   - python=3.8

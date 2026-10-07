@@ -3,7 +3,7 @@ Mirrors fit/snapmmd/classic/classic_sde.py (Repressilator) except for the data f
 import importlib.util, os, sys, time
 import numpy as np, torch
 from snapMMD.dls import MMDLoss, snapMMD, RBF
-HERE = os.path.dirname(os.path.abspath(__file__)); A = os.path.abspath(os.path.join(HERE, "..", ".."))   # aistats2027/
+HERE = os.path.dirname(os.path.abspath(__file__)); A = os.path.abspath(os.path.join(HERE, "..", ".."))   # reproduction/
 spec = importlib.util.spec_from_file_location("classic_models", f"{A}/code/models/classic.py")
 models = importlib.util.module_from_spec(spec); spec.loader.exec_module(models)
 seed = int(sys.argv[1]); torch.set_num_threads(2)

@@ -4,7 +4,7 @@ import numpy as np
 import ot
 import torch
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))     # aistats2027/
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))     # reproduction/
 DATA = os.path.abspath(os.path.join(ROOT, "..", "data"))                  # the released snapshots of the snapMMD repo
 SEEDS = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
 # paper label -> data file stem (without .npz) under data/

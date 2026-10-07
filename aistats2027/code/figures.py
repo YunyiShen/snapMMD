@@ -82,12 +82,12 @@ for label, stem in STEMS.items():
                               max_val_points=100 if label == "PBMC" else None)
     print(label, "galleries done", flush=True)
 
-# PBMC: particles of every interpolation method at the validation times, five times per block, methods split over two figures
+# PBMC: particles of every interpolation method at the validation times, five times per block (four in the last), methods split over two figures
 t = Task("PBMC"); hours = [0.5 + k for k in range(t.n_val)]
 groups = {"a": ["Ours", "SBIRR", "DMSB", "OT-CFM", "SB-CFM", "SF2M", "PRESCIENT"],
           "b": ["PI-SDE", "PI-SDE (learned sigma)", "scNODE", "JKOnet*", "JKOnet* (full)", "Persistence", "OT midpoint"]}
 for block in range(4):
-    times = [(k, f"{hours[k]:g} h") for k in range(5 * block, 5 * block + 5)]
+    times = [(k, f"{hours[k]:g} h") for k in range(5 * block, min(5 * block + 5, t.n_val))]
     for g, methods in groups.items():
         rows = [(SHOW.get(m, m), o["interp"]) for m in methods
                 if (o := output(m, "PBMC", 0 if m in ("Persistence", "OT midpoint") else FIG_SEED_INTERP)) is not None and "interp" in o]

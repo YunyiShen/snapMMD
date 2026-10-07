@@ -72,7 +72,10 @@ for d in sorted(glob.glob(f"{HERE}/results/outputs/*")):
         rows.append([method, variant, label, seed, "forecast", -1,
                      evaluation_mmd(torch.tensor(X), torch.tensor(fc)).item(), emd(fc, X) if label != "PBMC" else float("nan")])
         tr = np.load(f.replace("_forecast_", "_interpolation_"))["interpolation"]
-        idx = midpoints(tr.shape[0], tk.val_truth.shape[0])
+        # PBMC: paths on a 0.1 h grid over 0-19 h (191 points), read at the validation times 0.5, ..., 18.5 h;
+        # 19.5 h, after the last training time, is not scored. Other tasks: the midpoint rule is exact.
+        idx = np.arange(5, 190, 10) if label == "PBMC" else midpoints(tr.shape[0], tk.val_truth.shape[0])
+        assert label != "PBMC" or tr.shape[0] == 191
         for i, j in enumerate(idx):
             Y, Xv = tr[j][:, :tk.d], tk.val_truth[i]
             rows.append([method, variant, label, seed, "interp", i,

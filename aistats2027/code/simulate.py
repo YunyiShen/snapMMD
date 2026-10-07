@@ -12,7 +12,7 @@ import numpy as np
 import torch, torch.nn as nn, torchsde
 from snapMMD.booleansde import nninputfun
 from snapMMD.dls import MMDLoss, RBF
-from common import ROOT, DATA, SEEDS, TASKS, FIG_SEED_INTERP, path_for_figure, save_output
+from common import ROOT, DATA, SEEDS, TASKS, FIG_SEED_INTERP, Task, exact_path, path_for_figure, save_output
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -108,14 +108,15 @@ def run_sde(method, label, seed, writer):
         X0 = torch.concatenate((X0, torch.zeros_like(X0)), axis=1)
     with torch.no_grad():
         seed_all(seed); fc = torchsde.sdeint(model, X0, torch.tensor([0, dts[-1] / ts]), method="euler")
-        seed_all(seed + 1000); tr = torchsde.sdeint(model, X0, torch.linspace(dts[0] / ts, dts[-2] / ts, 500), method="euler")
+        grid, idx = exact_path(label, float(dts[0] / ts), float(dts[-2] / ts))
+        seed_all(seed + 1000); tr = torchsde.sdeint(model, X0, torch.tensor(grid, dtype=X0.dtype), method="euler")
         seed_all(seed + 2000)                                                    # R^2 as in snapMMD.train()
         n = torch.tensor([x.shape[0] for x in Xs], dtype=torch.float64); w = (n / n.sum()) ** 2; w = w / w.sum()
         rbf = RBF(); rbf.bandwidth = rbf.get_bandwidth_from_data(torch.cat(Xs)); M = MMDLoss(kernel=rbf); pooled = torch.cat(Xs)
         ssr = sum(w[i] * M(pooled, Xs[i]) for i in range(len(Xs)))
         ys = torchsde.sdeint(model, X0.repeat([5, 1]), dts[:-1] / ts, method="euler")
         r2 = 1. - sum(w[i] * M(ys[i][:, :d], Xs[i]) for i in range(len(Xs))) / ssr
-    save_output(f"{ROOT}/generated/{method}/{label}/seed_{seed}.npz", d, forecast=fc[-1].numpy(), traj=tr.numpy(), n_val=val["Xs"].shape[0])
+    save_output(f"{ROOT}/generated/{method}/{label}/seed_{seed}.npz", d, forecast=fc[-1].numpy(), traj=tr.numpy(), n_val=Task(label).n_val, idx=idx)
     save_figure_path(method, label, seed, tr.numpy(), d)
     if writer: writer.writerow([method, label, seed, f"{float(r2):.6f}"])
 
@@ -130,9 +131,10 @@ def run_neural(label, seed, writer):
     model.load_state_dict(torch.load(f"{ROOT}/checkpoints/fully_neural/{label}/model_{seed}.pt", map_location="cpu")); model = model.to(dt)
     with torch.no_grad():
         seed_all(seed); fc = torchsde.sdeint(model, X0, torch.tensor([0., float(dts[-1]) / ts], dtype=dt), method="euler")
-        torch.manual_seed(seed + 1000); tr = torchsde.sdeint(model, X0, torch.linspace(float(dts[0]) / ts, float(dts[-2]) / ts, 500, dtype=dt), method="euler")
+        grid, idx = exact_path(label, float(dts[0]) / ts, float(dts[-2]) / ts)
+        torch.manual_seed(seed + 1000); tr = torchsde.sdeint(model, X0, torch.tensor(grid, dtype=dt), method="euler")
     d = data["Xs"].shape[-1]
-    save_output(f"{ROOT}/generated/Fully neural/{label}/seed_{seed}.npz", d, forecast=fc[-1].numpy(), traj=tr.numpy(), n_val=val["Xs"].shape[0])
+    save_output(f"{ROOT}/generated/Fully neural/{label}/seed_{seed}.npz", d, forecast=fc[-1].numpy(), traj=tr.numpy(), n_val=Task(label).n_val, idx=idx)
     save_figure_path("Fully neural", label, seed, tr.numpy(), d)
     if writer: writer.writerow(["Fully neural", label, seed, ""])
 

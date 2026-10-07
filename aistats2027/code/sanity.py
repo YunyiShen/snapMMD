@@ -16,7 +16,7 @@ def ot_midpoint(A, B):
 
 
 for label in TASKS:
-    t = Task(label); snaps = list(t.train) + ([t.forecast_truth] if label == "PBMC" else [])
+    t = Task(label); snaps = list(t.train)
     pers = np.stack([snaps[i] for i in range(t.n_val)]); mid = np.stack([ot_midpoint(snaps[i], snaps[i + 1]) for i in range(t.n_val)])
     for name, interp, fc in [("Persistence", pers, t.train[-1]), ("OT midpoint", mid, None)]:
         p = f"{ROOT}/generated/{name}/{label}/seed_0.npz"; os.makedirs(os.path.dirname(p), exist_ok=True)

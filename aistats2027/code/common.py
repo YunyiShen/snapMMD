@@ -29,7 +29,10 @@ class Task:
     def __init__(self, label):
         self.label = label
         train = np.load(f"{DATA}/{TASKS[label]}.npz"); val = np.load(f"{DATA}/{TASKS[label]}_interp_val.npz")
-        self.train = train["Xs"][:-1]; self.forecast_truth = train["Xs"][-1]; self.val_truth = val["Xs"]
+        self.train = train["Xs"][:-1]; self.forecast_truth = train["Xs"][-1]
+        # validation snapshots strictly inside the training span [t_1, t_{T-1}] (PBMC: drops 19.5 h, after the last training time)
+        td, vd = np.asarray(train["dts"], float), np.asarray(val["dts"], float); keep = vd < td[-2] - 1e-9
+        self.train_dts, self.val_dts = td[:-1], vd[keep]; self.val_truth = val["Xs"][keep]
         self.d = train["Xs"].shape[-1]; self.n_val = self.val_truth.shape[0]
         self.h_train = median_bandwidth(self.train.reshape(-1, self.d))   # median heuristic on the pooled training snapshots
 
@@ -61,19 +64,31 @@ def emd(p, q):
     return float(np.sqrt(ot.emd2(np.ones(len(p)) / len(p), np.ones(len(q)) / len(q), np.ascontiguousarray(M), numItermax=int(1e7))))
 
 
+def exact_path(label, t0, t1, n_default=500):
+    """Evaluation grid of a simulated path on [t0, t1] and the indices of the validation times on it. The midpoint rule is exact
+    when the validation times are the midpoints of the training intervals (every task but PBMC); on PBMC the path is simulated on
+    a 0.05 h grid (381 points over 0-19 h), which contains every validation time 0.5, ..., 18.5 h."""
+    if label != "PBMC":
+        return np.linspace(t0, t1, n_default), None
+    task = Task(label); g = np.linspace(t0, t1, 381)
+    frac = (task.val_dts - task.train_dts[0]) / (task.train_dts[-1] - task.train_dts[0])
+    return g, np.rint(frac * 380).astype(int)
+
+
 def midpoints(n_steps, n_val):
     """Index rule for reading a simulated path at the validation times: the middle of each of n_val equal segments."""
     pts = np.linspace(0, n_steps - 1, n_val + 1, dtype=int)
     return (pts[1:] + pts[:-1]) // 2
 
 
-def save_output(path, d, forecast=None, traj=None, n_val=None):
-    """Uniform output format: 'forecast' (N, d) final cloud, 'interp' (n_val, N, d) path at the validation times."""
+def save_output(path, d, forecast=None, traj=None, n_val=None, idx=None):
+    """Uniform output format: 'forecast' (N, d) final cloud, 'interp' (n_val, N, d) path at the validation times
+    (read with the midpoint rule, or at the given path indices idx)."""
     out = {}
     if forecast is not None:
         out["forecast"] = np.asarray(forecast)[:, :d]
     if traj is not None:
-        out["interp"] = np.asarray(traj)[midpoints(traj.shape[0], n_val)][:, :, :d]
+        out["interp"] = np.asarray(traj)[midpoints(traj.shape[0], n_val) if idx is None else np.asarray(idx)][:, :, :d]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     np.savez_compressed(path, **out)
 

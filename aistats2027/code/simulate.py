@@ -131,7 +131,8 @@ def run_neural(label, seed, writer):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--methods", nargs="*", default=list(MODELS) + ["Fully neural"]); ap.add_argument("--tasks", nargs="*"); a = ap.parse_args()
     os.makedirs(f"{ROOT}/generated", exist_ok=True)
-    with open(f"{ROOT}/generated/r2.csv", "a", newline="") as f:
+    full = not a.tasks and set(a.methods) == set(MODELS) | {"Fully neural"}   # a full run starts a fresh file; partial runs append
+    with open(f"{ROOT}/generated/r2.csv", "w" if full else "a", newline="") as f:
         w = csv.writer(f)
         for method in a.methods:
             labels = list(NEURAL) if method == "Fully neural" else list(MODELS[method])

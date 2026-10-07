@@ -12,5 +12,6 @@ dependencies:
   - pip:
       - torchsde==0.2.6
       - POT==0.9.7.post1
+      - tqdm              # imported by the snapMMD package
       - fire              # command-line entry point of the training scripts in fit/
       - -e ../package     # the snapMMD package of this repository

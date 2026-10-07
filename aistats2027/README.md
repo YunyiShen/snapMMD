@@ -2,7 +2,7 @@
 
 This folder reproduces every table and the computed figures of the paper *Oh SnapMMD! Forecasting Stochastic Dynamics Beyond the Schrödinger Bridge's End* from the shipped checkpoints and outputs, and contains the scripts that trained every model. It uses the `snapMMD` package (`../package`) and the released data (`../data`) of this repository.
 
-## Quick start (laptop, about 1–2 hours, no training)
+## Quick start (laptop, about 20 minutes on a recent multicore machine, no training)
 
 ```bash
 conda env create -f environment.yml && conda activate snapmmd-aistats2027

@@ -1,6 +1,6 @@
 # Reproducing the AISTATS 2027 paper
 
-This folder reproduces every table and the computed figures of the paper *Forecasting Stochastic Dynamics Beyond the Schrödinger Bridge's End* from the shipped checkpoints and outputs, and contains the scripts that trained every model. It uses the `snapMMD` package (`../package`) and the released data (`../data`) of this repository.
+This folder reproduces every table and the computed figures of the paper *Oh SnapMMD! Forecasting Stochastic Dynamics Beyond the Schrödinger Bridge's End* from the shipped checkpoints and outputs, and contains the scripts that trained every model. It uses the `snapMMD` package (`../package`) and the released data (`../data`) of this repository.
 
 ## Quick start (laptop, about 1–2 hours, no training)
 

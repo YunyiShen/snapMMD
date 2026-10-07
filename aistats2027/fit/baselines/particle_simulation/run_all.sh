@@ -6,9 +6,9 @@ cd "$(dirname "$0")"
 source "$(conda info --base)/etc/profile.d/conda.sh"; conda activate snapmmd
 export PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 mkdir -p results/logs
-# Order: the authors' default variant of each method, PBMC first within each block (the slowest, and the results Renato wants most).
+# Order: the authors' default variant of each method, PBMC first within each block (the slowest).
 jobs=results/logs/joblist.txt; : > $jobs
-# 2026-10-03, Renato: the two non-default noise variants (prescient sd0.1, pisde const0.5) are dropped; PBMC first.
+# The two non-default noise variants (prescient sd0.1, pisde const0.5) are not run; PBMC first.
 for block in "scnode default" "prescient sd0.5" "pisde const0.1" "pisde mlp"; do
   for task in PBMC LV ReprParam ReprProtein GoM; do
     for seed in 1 2 3 4 5 40 41 42 43 44; do

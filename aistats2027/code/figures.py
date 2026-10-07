@@ -2,9 +2,11 @@
   - forecast figures (Figs. 1-4 and the LV figure of App. D): training snapshots, truth and the forecasts of SnapMMD, SBIRR-ref
     and SB-forward for seed 42, with the plotting functions used for the paper (code/plotting/);
   - vector-field difference figures of App. D (LV, the two repressilator families, GoM), from outputs/vector_fields (seed 42);
-  - interpolation-metric figures of App. D (MMD^2 and EMD at each validation time, 10 methods), from results/scores.csv.
-The trajectory figures (*_interpolationing.png, PBMC progression and interpolation grids) need the full baseline trajectories, which are
-not shipped (see README). Output: results/figures/. Requires a LaTeX installation (the plots use text.usetex)."""
+  - interpolation-metric figures of App. D (MMD^2 and EMD at each validation time, 10 methods), from results/scores.csv;
+  - galleries of every method of the appendix tables (App. E): forecasts (seed 42) from outputs/ and generated/, and interpolation
+    trajectories (seed 44) from outputs/paths_for_figures and generated/paths_for_figures (written by simulate.py);
+    {stem}_forecasting_all.png and {stem}_interpolation_all.png.
+PBMC interpolation grids of every method: pbmc_interpolation_grid_{1-4}{a,b}.png. The PBMC progression figure is not regenerated. Output: results/figures/. Requires a LaTeX installation (the plots use text.usetex)."""
 import csv, os, sys
 from collections import defaultdict
 import numpy as np
@@ -44,6 +46,53 @@ for label, name, plot in [("LV", "LV", "2d"), ("GoM", "GoM", "2d"), ("ReprParam"
     print(label, "forecast figure done", flush=True)
 Xs, Xv = data("PBMC")
 pf.plot_pbmc_forecasting_maintext(Xs, Xv, fc("Ours", "PBMC"), fc("SBIRR-ref", "PBMC"), fc("SB-forward", "PBMC"), outname="pbmc_forecasting_maintext.pdf")
+
+# galleries of every method in the appendix tables (App. E): forecasts (seed 42) and interpolation trajectories (seed 44)
+import galleries as gal                     # noqa: E402
+from common import Task, FIG_SEED_FORECAST, FIG_SEED_INTERP   # noqa: E402
+GENERATED = {"Ours", "Ours (mRNA-only model)", "Persistence", "OT midpoint"}      # written by simulate.py and sanity.py
+SHOW = {"PI-SDE (learned sigma)": r"PI-SDE (learned $\sigma$)", "Ours (mRNA-only model)": "Ours (mRNA-only model)"}
+FC_METHODS = ["Ours", "Ours (mRNA-only model)", "SBIRR-ref", "SB-forward", "PRESCIENT", "PI-SDE", "PI-SDE (learned sigma)", "scNODE", "JKOnet*",
+              "JKOnet* (full)", "Persistence", "SBIRR-ref (last snapshot)", "SB-forward (last snapshot)"]
+IN_METHODS = ["Ours", "SBIRR", "DMSB", "OT-CFM", "SB-CFM", "SF2M", "PRESCIENT", "PI-SDE", "PI-SDE (learned sigma)", "scNODE", "JKOnet*",
+              "JKOnet* (full)", "Persistence", "OT midpoint"]
+STEMS = {"LV": "LV", "ReprParam": "Repressilator", "ReprSemiparam": "mlp_Repressilator", "ReprProtein": "missingobs_Repressilator",
+         "GoM": "GoM", "PBMC": "pbmc"}
+
+
+def output(method, label, seed):
+    simple = method in ("Persistence", "OT midpoint")
+    f = f"{ROOT}/{'generated' if method in GENERATED else 'outputs'}/{method}/{label}/seed_{0 if simple else seed}.npz"
+    return np.load(f) if os.path.exists(f) else None
+
+
+for label, stem in STEMS.items():
+    t = Task(label); rng = np.random.default_rng(0)
+    panels = [(SHOW.get(m, m), o["forecast"]) for m in FC_METHODS if (o := output(m, label, FIG_SEED_FORECAST)) is not None and "forecast" in o]
+    gal.forecast_gallery(label, list(t.train), t.forecast_truth, panels, f"{FIG}/figs/{stem}_forecasting_all.png", show_train=label != "PBMC")
+    panels = []
+    for m in IN_METHODS:
+        if m in ("Persistence", "OT midpoint"):
+            x = output(m, label, 0)["interp"]; panels.append((m, "points", x[:, rng.choice(x.shape[1], min(200, x.shape[1]), replace=False)]))
+        else:
+            p = f"{ROOT}/{'generated' if m in GENERATED else 'outputs'}/paths_for_figures/{m}/{label}.npz"
+            if os.path.exists(p):
+                panels.append((SHOW.get(m, m), "path", np.load(p)["path"]))
+    gal.interpolation_gallery(label, list(t.val_truth), panels, f"{FIG}/figs/{stem}_interpolation_all.png",
+                              max_val_points=100 if label == "PBMC" else None)
+    print(label, "galleries done", flush=True)
+
+# PBMC: particles of every interpolation method at the validation times, five times per block, methods split over two figures
+t = Task("PBMC"); hours = [0.5 + k for k in range(t.n_val)]
+groups = {"a": ["Ours", "SBIRR", "DMSB", "OT-CFM", "SB-CFM", "SF2M", "PRESCIENT"],
+          "b": ["PI-SDE", "PI-SDE (learned sigma)", "scNODE", "JKOnet*", "JKOnet* (full)", "Persistence", "OT midpoint"]}
+for block in range(4):
+    times = [(k, f"{hours[k]:g} h") for k in range(5 * block, 5 * block + 5)]
+    for g, methods in groups.items():
+        rows = [(SHOW.get(m, m), o["interp"]) for m in methods
+                if (o := output(m, "PBMC", 0 if m in ("Persistence", "OT midpoint") else FIG_SEED_INTERP)) is not None and "interp" in o]
+        gal.interpolation_grid("PBMC", list(t.val_truth), rows, times, f"{FIG}/figs/pbmc_interpolation_grid_{block + 1}{g}.png")
+print("PBMC interpolation grids done", flush=True)
 
 # interpolation-metric figures (as in the paper: MMD^2 left, EMD right, mean +- SD over seeds, EMD axis capped at 5)
 S = defaultdict(lambda: defaultdict(list))

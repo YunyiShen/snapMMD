@@ -4,14 +4,15 @@ Writes generated/{method}/{task}/seed_{seed}.npz in the uniform format of output
 Protocol (as for every number in the paper): start from the observed first snapshot (unobserved protein coordinates at 0);
 forecast = sdeint(model, X0, [0, t_T]) with the Euler scheme; path = sdeint(model, X0, linspace(t_1, t_{T-1}, 500)), read at the
 validation times; times divided by the task's time scale. Seeds: seed (forecast), seed + 1000 (path), seed + 2000 (R^2).
-Usage: python simulate.py [--methods Ours "Fixed volatility" ...] [--tasks LV ...]
+For seed 44 it also writes generated/paths_for_figures/{method}/{task}.npz (a subsample of the path, for the trajectory figures).
+Usage: python simulate.py [--methods Ours "Fixed volatility" ...] [--tasks LV ...] [--seeds 44 ...]  (R^2 is written only when all seeds run)
 """
 import argparse, csv, importlib.util, os, sys
 import numpy as np
 import torch, torch.nn as nn, torchsde
 from snapMMD.booleansde import nninputfun
 from snapMMD.dls import MMDLoss, RBF
-from common import ROOT, DATA, SEEDS, TASKS, save_output
+from common import ROOT, DATA, SEEDS, TASKS, FIG_SEED_INTERP, path_for_figure, save_output
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -90,6 +91,12 @@ def seed_all(s):
     torch.manual_seed(s); np.random.seed(s)
 
 
+def save_figure_path(method, label, seed, traj, d):
+    if seed == FIG_SEED_INTERP:
+        out = f"{ROOT}/generated/paths_for_figures/{method}/{label}.npz"; os.makedirs(os.path.dirname(out), exist_ok=True)
+        np.savez_compressed(out, path=path_for_figure(traj, d))
+
+
 def run_sde(method, label, seed, writer):
     data = np.load(f"{DATA}/{TASKS[label]}.npz"); val = np.load(f"{DATA}/{TASKS[label]}_interp_val.npz")
     N = int(data["N_steps"]); Xs = [torch.tensor(data["Xs"][i]) for i in range(N - 1)]
@@ -109,7 +116,8 @@ def run_sde(method, label, seed, writer):
         ys = torchsde.sdeint(model, X0.repeat([5, 1]), dts[:-1] / ts, method="euler")
         r2 = 1. - sum(w[i] * M(ys[i][:, :d], Xs[i]) for i in range(len(Xs))) / ssr
     save_output(f"{ROOT}/generated/{method}/{label}/seed_{seed}.npz", d, forecast=fc[-1].numpy(), traj=tr.numpy(), n_val=val["Xs"].shape[0])
-    writer.writerow([method, label, seed, f"{float(r2):.6f}"])
+    save_figure_path(method, label, seed, tr.numpy(), d)
+    if writer: writer.writerow([method, label, seed, f"{float(r2):.6f}"])
 
 
 def run_neural(label, seed, writer):
@@ -125,19 +133,21 @@ def run_neural(label, seed, writer):
         torch.manual_seed(seed + 1000); tr = torchsde.sdeint(model, X0, torch.linspace(float(dts[0]) / ts, float(dts[-2]) / ts, 500, dtype=dt), method="euler")
     d = data["Xs"].shape[-1]
     save_output(f"{ROOT}/generated/Fully neural/{label}/seed_{seed}.npz", d, forecast=fc[-1].numpy(), traj=tr.numpy(), n_val=val["Xs"].shape[0])
-    writer.writerow(["Fully neural", label, seed, ""])
+    save_figure_path("Fully neural", label, seed, tr.numpy(), d)
+    if writer: writer.writerow(["Fully neural", label, seed, ""])
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(); ap.add_argument("--methods", nargs="*", default=list(MODELS) + ["Fully neural"]); ap.add_argument("--tasks", nargs="*"); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument("--methods", nargs="*", default=list(MODELS) + ["Fully neural"]); ap.add_argument("--tasks", nargs="*")
+    ap.add_argument("--seeds", nargs="*", type=int); a = ap.parse_args(); seeds = a.seeds or SEEDS
     os.makedirs(f"{ROOT}/generated", exist_ok=True)
-    full = not a.tasks and set(a.methods) == set(MODELS) | {"Fully neural"}   # a full run starts a fresh file; partial runs append
+    full = not a.tasks and not a.seeds and set(a.methods) == set(MODELS) | {"Fully neural"}   # a full run starts a fresh file; partial runs append
     with open(f"{ROOT}/generated/r2.csv", "w" if full else "a", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f) if not a.seeds else None
         for method in a.methods:
             labels = list(NEURAL) if method == "Fully neural" else list(MODELS[method])
             for label in labels:
                 if a.tasks and label not in a.tasks: continue
-                for s in SEEDS:
+                for s in seeds:
                     run_neural(label, s, w) if method == "Fully neural" else run_sde(method, label, s, w)
                 print(method, label, "done", flush=True)

@@ -76,3 +76,16 @@ def save_output(path, d, forecast=None, traj=None, n_val=None):
         out["interp"] = np.asarray(traj)[midpoints(traj.shape[0], n_val)][:, :, :d]
     os.makedirs(os.path.dirname(path), exist_ok=True)
     np.savez_compressed(path, **out)
+
+
+FIG_SEED_FORECAST, FIG_SEED_INTERP = 42, 44      # seeds shown in the forecast and interpolation figures
+
+
+def path_for_figure(traj, d, n_particles=200, n_times=100, dims=3, seed=0):
+    """(T, N, D) simulated path -> (n_particles, n_times, min(d, dims)) float32 subsample, used only to draw the trajectory
+    figures: particles drawn without replacement (fixed seed), times evenly thinned, the first observed coordinates kept."""
+    traj = np.asarray(traj)
+    T, N = traj.shape[:2]
+    ti = np.unique(np.linspace(0, T - 1, min(T, n_times)).round().astype(int))
+    pi = np.sort(np.random.default_rng(seed).choice(N, min(N, n_particles), replace=False))
+    return np.ascontiguousarray(traj[ti][:, pi, :min(d, dims)].transpose(1, 0, 2)).astype(np.float32)

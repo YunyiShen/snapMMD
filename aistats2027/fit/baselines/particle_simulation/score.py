@@ -16,7 +16,8 @@ import numpy as np
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-W = os.path.abspath(os.path.join(HERE, ".."))                                   # snapMMD
+W = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))                # repository root (data/ is here)
+DATA = os.path.join(W, "data")
 import sys
 
 # data of each task (the truth at the forecast time and the validation snapshots), as in the paper's evaluation

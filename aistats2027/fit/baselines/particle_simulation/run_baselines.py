@@ -36,7 +36,7 @@ import numpy as np
 import torch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = os.path.abspath(os.path.join(HERE, "..", "data"))          # snapMMD/data
+DATA = os.path.abspath(os.path.join(HERE, "..", "..", "..", "..", "data"))   # the repository's data/
 OUT = f"{HERE}/results/outputs"
 torch.set_num_threads(1)
 

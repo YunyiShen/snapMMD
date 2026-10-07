@@ -6,8 +6,7 @@ Code and data to reproduce the paper.
 |---|---|
 | `package/` | the `snapMMD` Python package (`pip install ./package`) |
 | `data/` | the snapshot data of the six tasks |
-| `aistats2027/` | everything needed to reproduce the paper's tables and figures: checkpoints, baseline outputs, evaluation code, and the training scripts of every model; start with `aistats2027/README.md` |
-| `forecasting_baselines/` | the four particle-simulation baselines (PRESCIENT, PI-SDE, scNODE, JKOnet*); see its README |
+| `aistats2027/` | everything needed to reproduce the paper's tables and figures: checkpoints, baseline outputs, evaluation code, and the training scripts of every model and baseline (`aistats2027/fit/`); start with `aistats2027/README.md` |
 
 Quick start:
 

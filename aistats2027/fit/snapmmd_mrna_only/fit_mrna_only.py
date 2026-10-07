@@ -1,5 +1,5 @@
 """Campaign 9: SnapMMD with the mRNA-only parametric repressilator on the mRNA-protein data (one seed per call).
-Mirrors MMD-SDE/experiments/classic/classic_sde.py (Repressilator) except for the data file."""
+Mirrors fit/snapmmd/classic/classic_sde.py (Repressilator) except for the data file."""
 import importlib.util, os, sys, time
 import numpy as np, torch
 from snapMMD.dls import MMDLoss, snapMMD, RBF

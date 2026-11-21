@@ -179,8 +179,13 @@ def evaluate(model, path, interp_path, xs, scale, seed, dt, out):
 def run(args):
     torch.set_num_threads(args.threads)
     torch.set_num_interop_threads(1)
-    if args.device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA requested but unavailable; refusing a CPU fallback")
+    if args.device == "cuda":
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but unavailable; refusing a CPU fallback")
+        # Keep float32 comparisons independent of the device's TF32 defaults.
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
     torch.use_deterministic_algorithms(True)
     np.random.seed(args.seed)
     path = args.data_root / "classic" / (STEMS[args.task] + "_data.npz")
@@ -203,6 +208,9 @@ def run(args):
         "train_times_solver": times.cpu().tolist(), "train_bandwidth": float(criterion.kernel.bandwidth),
         "trainable_parameters": sum(p.numel() for p in params), "dtype": "float32",
         "device": args.device, "threads": args.threads,
+        "cuda_runtime": torch.version.cuda,
+        "gpu_name": torch.cuda.get_device_name() if args.device == "cuda" else None,
+        "tf32": False if args.device == "cuda" else None,
         "data_sha256": sha256(path), "interp_sha256": sha256(interp_path),
         "source_sha256": {str(p.relative_to(REPO)): sha256(p) for p in source_paths},
         "brownian": {"train_entropy": args.seed + 10000, "halfway_tree": True, "tol": 1e-6},
@@ -243,13 +251,19 @@ def run(args):
                             "job_id": os.environ.get("SLURM_JOB_ID"), "epoch_start": epoch0,
                             "epoch_target": args.epochs}) + "\n")
     print(json.dumps(config, indent=2), flush=True)
+    if args.device == "cuda":
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
     start = time.perf_counter()
+    epoch_seconds = []
     try:
         with (out / "history.csv").open("a", newline="", buffering=1) as f:
             writer = csv.writer(f)
             if f.tell() == 0:
                 writer.writerow(["epoch", "loss_before_update", "grad_norm", "seconds"])
             for epoch in range(epoch0 + 1, args.epochs + 1):
+                if args.device == "cuda":
+                    torch.cuda.synchronize()
                 t0 = time.perf_counter()
                 optimizer.zero_grad()
                 loss = objective(model, y0, times, xs, criterion, weights, bm, args.dt)
@@ -260,7 +274,10 @@ def run(args):
                 optimizer.step()
                 if not all(torch.isfinite(p).all() for p in params):
                     raise FloatingPointError("Nonfinite parameters at epoch %d" % epoch)
+                if args.device == "cuda":
+                    torch.cuda.synchronize()
                 seconds = time.perf_counter() - t0
+                epoch_seconds.append(seconds)
                 writer.writerow([epoch, float(loss), float(norm), seconds])
                 if epoch == 1 or epoch % args.log_every == 0 or epoch == args.epochs:
                     print("epoch=%d loss=%.7g seconds=%.3f" % (epoch, loss, seconds), flush=True)
@@ -276,6 +293,8 @@ def run(args):
         metrics = evaluate(model, path, interp_path, xs, scale, args.seed, args.dt, out)
         summary = {"epochs": args.epochs, "epochs_this_invocation": args.epochs - epoch0,
                    "training_seconds_this_invocation": training_seconds,
+                   "median_epoch_seconds_after_5_warmup": float(np.median(epoch_seconds[5:])) if len(epoch_seconds) > 5 else None,
+                   "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated() if args.device == "cuda" else None,
                    "final_training_loss": float(final_loss),
                    "interp_mean_mmd2": float(np.mean([r["mmd2"] for r in metrics if r["protocol"] == "interp"]))}
         write_json(out / "summary.json", summary)

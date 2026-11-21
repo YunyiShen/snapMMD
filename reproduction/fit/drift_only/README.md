@@ -104,9 +104,55 @@ cores, no GPU. A ten-seed expansion would use array `0-39%2`; it is deliberately
 not the default and needs a separate budget decision.
 
 Overrides: `SNAPMMD_REPO` (code root), `SNAPMMD_PYTHON` (Python executable),
-`SNAPMMD_RUNS` (output root), `SNAPMMD_STAGE`, `SNAPMMD_EPOCHS`.
+`SNAPMMD_RUNS` (output root), `SNAPMMD_STAGE`, `SNAPMMD_EPOCHS`, `SNAPMMD_DEVICE`.
 Defaults write results under `/mnt/ceph/users/$USER/snapmmd-runs/<stage>/<array-id>/`.
 The launcher does not send email or interact with other projects.
+
+## GPU pilot
+
+The MLPs have 322 (LV) and 451 (repressilator) trainable parameters, but each epoch
+also simulates 1,000 particles and computes dense MMD kernels. A GPU may help;
+the many sequential solver steps also impose overhead. CPU feasibility alone
+does not establish which backend is faster. Compare the same 20-epoch pilot
+on Rusty CPU and GPU before choosing the full-run backend.
+
+Create a **separate** CUDA environment once, then submit from the repository root:
+
+```bash
+bash reproduction/fit/drift_only/setup_rusty.sh cuda
+sbatch reproduction/fit/drift_only/rusty_gpu.sbatch
+```
+
+The installer uses `~/venvs/snapmmd-drift-cuda` and the official torch 2.2.1
+[CUDA 12.1 wheel](https://pytorch.org/get-started/previous-versions/#v221).
+It leaves the CPU environment unchanged. A CUDA-enabled PyTorch installation
+is necessary; allocating a GPU while using the CPU wheel is insufficient.
+
+The GPU launcher requests **one H100 and one CPU core**, 8 GB host RAM, 10 minutes
+per fit, four tasks with concurrency one. Total cap: **40 GPU-minutes and
+40 CPU-minutes**. H100 matches existing Rusty node templates and the pinned
+CUDA build; these small MLPs do not require that particular GPU model.
+Outputs use stage `pilot-gpu`. CUDA availability and a small forward/backward
+operation are checked before training; a missing/misconfigured GPU aborts the
+job, with no CPU fallback. GPU model, driver and CPU information go in the log.
+
+After both pilots, compare `median_epoch_seconds_after_5_warmup` in each fit's
+`summary.json`, overall training time, failures and memory. That median uses
+epochs 6–20 for a fresh 20-epoch run. CUDA timing explicitly synchronizes work;
+see [PyTorch's timing guidance](https://docs.pytorch.org/docs/2.2/notes/cuda.html#asynchronous-execution).
+GPU peak allocated tensor memory is saved as `cuda_peak_allocated_bytes`.
+Evaluation/serialization overhead and queue time are separate from epoch time.
+The full GPU resource request should be selected from these measurements;
+the launcher defaults only to the short pilot.
+
+Both backends retain float32 and deterministic algorithms. GPU runs explicitly
+disable TF32 and set `CUBLAS_WORKSPACE_CONFIG=:4096:8`, as required for deterministic
+CUDA matrix operations in [PyTorch 2.2](https://docs.pytorch.org/docs/2.2/generated/torch.use_deterministic_algorithms.html).
+CPU and CUDA runs need not be bit-identical even with the same seed. Use the
+same backend for both drift arms when making the scientific comparison.
+
+The CUDA runtime and cluster execution still need validation on Rusty. Local
+CPU regression checks do not constitute a GPU benchmark.
 
 ## Outputs and restart
 
@@ -119,7 +165,8 @@ Each fit saves:
 - `predictions.npz`, `metrics.csv`: held-out forecasts from both the first and
   last training snapshots, interpolation at the nine exact target times, and
   last-snapshot persistence. MMD² and W2 reuse the released evaluation functions.
-- `summary.json`: completion marker and final, post-update training loss.
+- `summary.json`: completion marker, final post-update training loss, timing
+  median after five warmup epochs, and GPU peak allocated memory when applicable.
 - `failure_*.json`: exceptions, retained even if a later restart succeeds.
 
 Evaluation uses separate noise streams from training, paired between the arms.
@@ -132,3 +179,5 @@ of the history before dropping rows beyond the last durable checkpoint.
 Completed outputs cannot be resumed or overwritten. For a new budget/setting,
 use a new directory. A Slurm resubmission gets a new job ID and therefore starts
 a fresh fit by default; use the CLI explicitly to resume the old directory.
+Updating the trainer changes its source hash: finish/resume existing runs from
+their original checkout; use a new output directory for this GPU-capable revision.

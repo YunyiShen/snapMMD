@@ -6,6 +6,7 @@ inputs, per-row failures, and a wall-clock budget are recorded. No training.
 """
 import argparse
 import csv
+import hashlib
 import json
 import platform
 import subprocess
@@ -24,7 +25,13 @@ from parameter_recovery import sha256, write_csv, write_json
 
 METHODS = ("Ours", "SBIRR-ref", "SB-forward")
 FIELDS = ["panel", "task", "method", "seed", "replicate", "start", "horizon", "physical_time",
-          "status", "reason", "mmd2", "mmd2_h_train", "emd", "entropy", "seconds", "source"]
+          "status", "reason", "mmd2", "mmd2_h_train", "emd", "entropy", "seconds", "source", "first_failed_requested_time"]
+
+
+def valid_prefix(predictions):
+    """Keep finite early endpoints if a later forecast diverges."""
+    finite = np.isfinite(predictions).all(axis=(1, 2))
+    return int(np.flatnonzero(~finite)[0]) if not finite.all() else len(finite)
 
 
 def score(task, pred, truth):
@@ -73,6 +80,7 @@ def historical(out, task_objects, record, jkonet_dir=None):
                 rows.append(dict(panel="historical", task=task, method="JKOnet*", seed=seed, replicate="historical",
                     start="last", horizon=1, physical_time="", status="ok", reason="one saved evaluation draw",
                     entropy="", seconds="", source=str(path), **values))
+        print("Historical scores verified: " + task, flush=True)
     assert differences and max(differences) < 1e-10, (len(differences), max(differences))
     write_csv(out / "tables/historical_scores.csv", rows)
     return dict(rows_compared=len(differences), max_abs_difference=max(differences), saved_restart_rows=len(rows)-len(differences))
@@ -127,7 +135,7 @@ def run(args):
     write_json(out / "input_manifest.json", manifest)
     repeats = 1 if args.pilot else 3
     seeds = [1] if args.pilot else args.seeds
-    targets, target_meta = {}, {}
+    targets, target_meta, target_hashes = {}, {}, {}
     target_tasks = ("LV",) if args.pilot else ("LV", "ReprParam")
     target_horizons = (1,) if args.pilot else HORIZONS
     for task in target_tasks:
@@ -138,6 +146,7 @@ def run(args):
                 t = time.monotonic()
                 a, meta = population(task, h, TARGET_IDS[rep])
                 targets[task, rep, h] = a
+                target_hashes[task, rep, h] = hashlib.sha256(a.tobytes()).hexdigest()
                 target_meta["%s_r%d_h%d" % (task,rep,h)] = meta
                 np.savez_compressed(out / "outputs" / ("truth_%s_r%d_h%d.npz" % (task, rep, h)), truth=a)
                 timing.append(dict(stage="truth", task=task, method="generator", seconds=time.monotonic()-t))
@@ -161,7 +170,7 @@ def run(args):
             except Exception as e:
                 row.update(status="failed", reason=repr(e))
             if row["status"] != "ok":
-                failures.append({k:row[k] for k in ("panel","task","method","seed","replicate","start","horizon","status","reason")})
+                failures.append({k:row[k] for k in ("panel","task","method","seed","replicate","start","horizon","physical_time","status","reason","first_failed_requested_time")})
             writer.writerow(row)
             f.flush()
         # Persistence has no fitted-seed replication; keep this separate in summaries.
@@ -192,7 +201,7 @@ def run(args):
                         ent = entropy(task, method, seed, rep)
                         for protocol in ("first", "last"):
                             t = time.monotonic()
-                            predictions, ts = None, None
+                            predictions, ts, prefix, first_failed = None, None, 0, ""
                             status, reason = "ok", ""
                             if load_error:
                                 status, reason = "failed", load_error
@@ -203,8 +212,9 @@ def run(args):
                             else:
                                 try:
                                     predictions, ts = adapter.rollout(data[task], protocol, endpoints, ent)
-                                    if not np.isfinite(predictions).all():
-                                        raise ValueError("nonfinite rollout")
+                                    prefix = valid_prefix(predictions)
+                                    if prefix < len(endpoints):
+                                        first_failed = endpoints[prefix]
                                     name = "%s_%s_s%d_r%d_%s" % (task, method, seed, rep, protocol)
                                     np.savez_compressed(out / "outputs" / (name + ".npz"), predictions=predictions,
                                                         solver_times=ts, physical_times=np.array(endpoints), entropy=ent)
@@ -212,18 +222,25 @@ def run(args):
                                     status, reason = "failed", repr(e)
                             elapsed = time.monotonic()-t
                             base = dict(task=task, method=method, seed=seed, replicate=rep, start=protocol,
-                                        entropy=ent, status=status, reason=reason, seconds=elapsed, source="fresh_explicit_noise")
-                            emit(dict(base, panel="A", horizon=1, physical_time=endpoints[0]),
-                                 predictions[0] if status == "ok" else None, obj.forecast_truth)
+                                        entropy=ent, status=status, reason=reason, seconds=elapsed, source="fresh_explicit_noise",
+                                        first_failed_requested_time=first_failed)
+                            def endpoint_row(j, panel, h, truth):
+                                row = dict(base, panel=panel, horizon=h, physical_time=endpoints[j])
+                                valid = status == "ok" and j < prefix
+                                if status == "ok" and not valid:
+                                    row.update(status="failed", reason="nonfinite rollout; first failed requested time " + str(first_failed))
+                                emit(row, predictions[j] if valid else None, truth)
+                            endpoint_row(0, "A", 1, obj.forecast_truth)
                             for j,h in enumerate(horizons):
                                 if (task,rep,h) in targets:
-                                    emit(dict(base, panel="B", horizon=h, physical_time=endpoints[j]),
-                                         predictions[j] if status == "ok" else None, targets[task,rep,h])
+                                    endpoint_row(j, "B", h, targets[task,rep,h])
+                            log_status = "partial_nonfinite" if status == "ok" and prefix < len(endpoints) else status
                             timing.append(dict(stage="rollout", task=task, method=method, seed=seed, replicate=rep,
-                                               start=protocol, status=status, seconds=elapsed))
+                                               start=protocol, status=log_status, seconds=elapsed, valid_endpoints=prefix,
+                                               first_failed_requested_time=first_failed))
                             print("%s %s s%d r%d %s: %s %.2fs; budget %.0fs" %
-                                  (task,method,seed,rep,protocol,status,elapsed,remaining()), flush=True)
-                            if args.pilot and method == "Ours" and task in ("LV","PBMC") and status == "ok":
+                                  (task,method,seed,rep,protocol,log_status,elapsed,remaining()), flush=True)
+                            if args.pilot and method == "Ours" and task in ("LV","PBMC") and status == "ok" and prefix:
                                 half, _ = adapter.rollout(data[task], protocol, endpoints, ent, dt=.0005)
                                 checks.setdefault("model_half_step", []).append(dict(task=task, start=protocol,
                                     coupled_particle_rmse=float(np.sqrt(np.mean((predictions[0]-half[0])**2))),
@@ -256,6 +273,8 @@ def run(args):
                             horizon=h,physical_time=9+h,entropy=ent,status="failed" if reason else "ok",reason=reason),
                             None if reason else pred[j], targets[task,rep,h])
     checks["inputs_unchanged"] = all(sha256(p)==h for p,h in inputs.items())
+    checks["generated_targets_unchanged"] = all(hashlib.sha256(a.tobytes()).hexdigest()==target_hashes[k] for k,a in targets.items())
+    assert checks["generated_targets_unchanged"]
     assert checks["inputs_unchanged"]
     write_json(out / "reproduction_checks.json", checks)
     write_json(out / "failures.json", failures)

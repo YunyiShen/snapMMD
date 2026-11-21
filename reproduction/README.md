@@ -75,3 +75,25 @@ Run from the repository root with the reproduction environment and installed `pa
 The output includes input hashes, reproduction checks, failures, per-fit tables and
 summary tables. Spread is across saved fits on one dataset. The latent protein scale
 and the semiparametric diffusion-family mismatch are flagged explicitly.
+
+`code/evaluate_forecasts.py` evaluates frozen SnapMMD/SB references from the first
+and last observed snapshots, with explicit Brownian seeds. It generates independent
+LV/repressilator populations at physical times 10, 11, 12 and 14, after training ends
+at time 9. Real-data comparisons use the existing single future target. Example:
+
+```bash
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+python reproduction/code/evaluate_forecasts.py --pilot --budget-seconds 600 \
+  --out /path/to/new/forecast-pilot --sb-package /path/to/SBIRR/package
+```
+
+Omit `--pilot` for three evaluation repeats over the supplied `--seeds` (default all
+ten). Optional `--jkonet-dir` reads existing potential-model arrays including their
+saved one-step restarts; it does not refit or extrapolate those arrays. The evaluator
+preserves each fitted clock: PBMC physical hours are divided by 400 for the existing
+SnapMMD checkpoint, and by 20 for SB references. Other SnapMMD divisors are 9 (LV),
+10 (repressilator) and 8 (GoM); SB uses the stored times directly. Six-dimensional
+latent models cannot restart from the observed mRNA-only last snapshot, and are
+explicitly unavailable there. Raw outputs go under the new output root, leaving the
+released predictions unchanged. Use an external timeout as well as the evaluator's
+between-operation budget checks for a strict process runtime limit.

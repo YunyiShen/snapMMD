@@ -1,0 +1,313 @@
+"""Matched drift-family fits with known, frozen, state-dependent diffusion.
+
+Uses the released structured models, training MMD, and evaluation metrics.
+No test/interpolation targets enter the training loss or model selection.
+"""
+import argparse
+import csv
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import platform
+import subprocess
+import sys
+import time
+
+import numpy as np
+import torch
+from torch import nn
+import torchsde
+
+REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO / "package"))
+sys.path.insert(0, str(REPO / "reproduction/code"))
+from snapMMD.dls import MMDLoss, RBF
+from models.classic import LotkaVolterra, repressilator
+from common import mmd2, emd
+
+STEMS = {"LV": "LV", "ReprParam": "Repressilator"}
+SEEDS = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
+
+
+class FixedDiffusionSDE(nn.Module):
+    noise_type = "diagonal"
+    sde_type = "ito"
+
+    def __init__(self, drift, arm, time_scale):
+        super().__init__()
+        self.drift = drift
+        self.arm = arm
+        # Physical g(x)=0.02*x_+; under s=t/c the solver uses sqrt(c)*g(x).
+        self.register_buffer("sigma_solver", torch.tensor(0.02 * math.sqrt(time_scale)))
+
+    def f(self, t, y):
+        return self.drift.f(t, y) if self.arm == "structured" else self.drift(y)
+
+    def g(self, t, y):
+        return self.sigma_solver * torch.relu(y)
+
+
+def make_model(task, arm, time_scale, seed):
+    torch.manual_seed(seed)
+    if arm == "structured":
+        if task == "LV":
+            drift = LotkaVolterra(0.5 * 9, 0.1 * 9, 0.1 * 9, 0.02 * 9, 0.03)
+        else:
+            drift = repressilator(10., 1., 1., 10., 0.03)
+        # The common wrapper bypasses the old g; never optimize its unused sigma.
+        drift.sigma.requires_grad_(False)
+    else:
+        dim = 2 if task == "LV" else 3
+        # Same architecture and initialization as fit/fully_neural/MLP.py.
+        drift = nn.Sequential(nn.Linear(dim, 64), nn.ReLU(), nn.Linear(64, dim))
+    return FixedDiffusionSDE(drift, arm, time_scale)
+
+
+def load_training(path, device="cpu"):
+    with np.load(path, allow_pickle=False) as z:
+        xs = torch.as_tensor(z["Xs"][:-1].copy(), dtype=torch.float32, device=device)
+        physical_times = np.asarray(z["dts"][:-1], dtype=float)
+        scale = float(z["time_scale"])
+        assert len(xs) == int(z["N_steps"]) - 1
+    times = torch.tensor(physical_times / scale, dtype=torch.float32, device=device)
+    assert scale > 0 and torch.all(times[1:] > times[:-1]) and times[0] == 0
+    return xs, times, scale
+
+
+def make_brownian(y0, times, seed):
+    # An explicit entropy and an order-independent tree make pairs and resumes
+    # share paths. The old fitter relied on an implicit BrownianInterval seed.
+    # Enclose float32 endpoints on the tree's rounded time grid; otherwise its
+    # endpoint rounding can put the requested final time just outside the tree.
+    tol = 1e-6
+    return torchsde.BrownianInterval(
+        t0=math.floor(float(times[0]) / tol) * tol,
+        t1=math.ceil(float(times[-1]) / tol) * tol, size=y0.shape,
+        dtype=y0.dtype, device=y0.device, entropy=seed,
+        halfway_tree=True, tol=tol,
+    )
+
+
+def training_objective(xs):
+    kernel = RBF().to(xs.device)
+    kernel.bandwidth = kernel.get_bandwidth_from_data(torch.cat(list(xs)))
+    if not torch.isfinite(kernel.bandwidth) or kernel.bandwidth <= 0:
+        raise ValueError("Nonpositive or nonfinite training bandwidth")
+    criterion = MMDLoss(kernel).to(xs.device)
+    weights = torch.tensor([len(x) for x in xs], device=xs.device, dtype=xs.dtype)
+    weights = (weights / weights.sum()).square()
+    weights = weights / weights.sum()
+    return criterion, weights
+
+
+def objective(model, y0, times, xs, criterion, weights, bm, dt):
+    ys = torchsde.sdeint_adjoint(model, y0, times, bm=bm, method="euler", dt=dt)
+    return sum(w * criterion(y, x) for w, y, x in zip(weights, ys, xs))
+
+
+def sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def git_provenance():
+    result = {}
+    for name, command in [("commit", ["rev-parse", "HEAD"]), ("status", ["status", "--short"])]:
+        proc = subprocess.run(["git", "-C", str(REPO)] + command,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        result[name] = proc.stdout.strip() if proc.returncode == 0 else None
+    return result
+
+
+def write_json(path, value):
+    path = Path(path)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+    tmp.replace(path)
+
+
+def save_checkpoint(path, model, optimizer, epoch, config):
+    tmp = path.with_suffix(".tmp")
+    torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                "epoch": epoch, "config": config}, tmp)
+    tmp.replace(path)
+
+
+@torch.no_grad()
+def evaluate(model, path, interp_path, xs, scale, seed, dt, out):
+    with np.load(path, allow_pickle=False) as z:
+        truth = z["Xs"][-1].copy()
+        last_t, target_t = map(float, z["dts"][-2:])
+    with np.load(interp_path, allow_pickle=False) as z:
+        keep = np.asarray(z["dts"]) < last_t
+        interp_t = np.asarray(z["dts"], float)[keep]
+        interp_truth = z["Xs"][keep].copy()
+    clouds = {}
+    rows = []
+
+    def simulate(initial, physical_times, noise_seed):
+        ts = torch.tensor(physical_times / scale, dtype=initial.dtype, device=initial.device)
+        bm = make_brownian(initial, ts, noise_seed)
+        ys = torchsde.sdeint(model, initial, ts, method="euler", bm=bm, dt=dt)
+        if not torch.isfinite(ys).all():
+            raise FloatingPointError("Nonfinite evaluation trajectory")
+        return ys.cpu().numpy()
+
+    # Common noise between arms; independent streams for the three protocols.
+    clouds["forecast_first"] = simulate(xs[0], np.array([0., target_t]), seed + 20000)[-1]
+    clouds["forecast_last"] = simulate(xs[-1], np.array([last_t, target_t]), seed + 30000)[-1]
+    clouds["interp"] = simulate(xs[0], np.r_[0., interp_t], seed + 40000)[1:]
+    for protocol in ("forecast_first", "forecast_last"):
+        rows.append({"protocol": protocol, "time": target_t,
+                     "mmd2": float(mmd2(truth, clouds[protocol])["snap"]),
+                     "w2": emd(truth, clouds[protocol])})
+    for t, target, cloud in zip(interp_t, interp_truth, clouds["interp"]):
+        rows.append({"protocol": "interp", "time": float(t),
+                     "mmd2": float(mmd2(target, cloud)["snap"]), "w2": emd(target, cloud)})
+    persistence = xs[-1].cpu().numpy()
+    rows.append({"protocol": "persistence_last", "time": target_t,
+                 "mmd2": float(mmd2(truth, persistence)["snap"]), "w2": emd(truth, persistence)})
+    np.savez_compressed(out / "predictions.npz", **clouds, interp_times=interp_t)
+    with (out / "metrics.csv").open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["protocol", "time", "mmd2", "w2"])
+        writer.writeheader()
+        writer.writerows(rows)
+    return rows
+
+
+def run(args):
+    torch.set_num_threads(args.threads)
+    torch.set_num_interop_threads(1)
+    if args.device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but unavailable; refusing a CPU fallback")
+    torch.use_deterministic_algorithms(True)
+    np.random.seed(args.seed)
+    path = args.data_root / "classic" / (STEMS[args.task] + "_data.npz")
+    interp_path = path.with_name(path.stem + "_interp_val.npz")
+    xs, times, scale = load_training(path, args.device)
+    model = make_model(args.task, args.drift, scale, args.seed).to(args.device)
+    params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.Adam(params, lr=args.lr)
+    y0 = xs[0].repeat(5, 1)
+    criterion, weights = training_objective(xs)
+    bm = make_brownian(y0, times, args.seed + 10000)
+    source_paths = [Path(__file__).resolve(), REPO / "package/snapMMD/dls.py",
+                    REPO / "reproduction/code/models/classic.py", REPO / "reproduction/code/common.py"]
+    config = {
+        "task": args.task, "drift": args.drift, "seed": args.seed,
+        "epochs_policy": "fixed budget; no target-based selection", "lr": args.lr,
+        "dt_solver": args.dt, "gradclip": args.gradclip, "time_scale": scale,
+        "sigma_physical": 0.02, "diffusion": "diagonal relu(x)",
+        "sigma_solver": float(model.sigma_solver), "train_particles": len(y0),
+        "train_times_solver": times.cpu().tolist(), "train_bandwidth": float(criterion.kernel.bandwidth),
+        "trainable_parameters": sum(p.numel() for p in params), "dtype": "float32",
+        "device": args.device, "threads": args.threads,
+        "data_sha256": sha256(path), "interp_sha256": sha256(interp_path),
+        "source_sha256": {str(p.relative_to(REPO)): sha256(p) for p in source_paths},
+        "brownian": {"train_entropy": args.seed + 10000, "halfway_tree": True, "tol": 1e-6},
+        "versions": {"python": platform.python_version(), "torch": str(torch.__version__),
+                     "torchsde": torchsde.__version__, "numpy": np.__version__},
+    }
+    out = args.output.resolve()
+    epoch0 = 0
+    if args.resume:
+        state = torch.load(out / "checkpoint.pt", map_location=args.device)
+        if state["config"] != config:
+            raise ValueError("Resume configuration/source/data/environment mismatch")
+        if (out / "summary.json").exists():
+            raise ValueError("Completed output is immutable; use a new output directory")
+        model.load_state_dict(state["model"])
+        optimizer.load_state_dict(state["optimizer"])
+        epoch0 = state["epoch"]
+        if epoch0 > args.epochs:
+            raise ValueError("Requested budget is below the checkpoint's epoch")
+        # Drop log rows after the last durable checkpoint, preserving an audit copy.
+        log = out / "history.csv"
+        if log.exists():
+            old = log.read_text()
+            (out / ("history_before_resume_%d.csv" % time.time_ns())).write_text(old)
+            rows = list(csv.DictReader(old.splitlines()))
+            with log.open("w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=["epoch", "loss_before_update", "grad_norm", "seconds"])
+                writer.writeheader()
+                writer.writerows(r for r in rows if int(r["epoch"]) <= epoch0)
+    else:
+        out.mkdir(parents=True, exist_ok=False)
+        write_json(out / "config.json", config)
+        save_checkpoint(out / "checkpoint.pt", model, optimizer, 0, config)
+    with (out / "invocations.jsonl").open("a") as f:
+        f.write(json.dumps({"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "command": sys.argv, "host": platform.node(),
+                            "git": git_provenance(),
+                            "job_id": os.environ.get("SLURM_JOB_ID"), "epoch_start": epoch0,
+                            "epoch_target": args.epochs}) + "\n")
+    print(json.dumps(config, indent=2), flush=True)
+    start = time.perf_counter()
+    try:
+        with (out / "history.csv").open("a", newline="", buffering=1) as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(["epoch", "loss_before_update", "grad_norm", "seconds"])
+            for epoch in range(epoch0 + 1, args.epochs + 1):
+                t0 = time.perf_counter()
+                optimizer.zero_grad()
+                loss = objective(model, y0, times, xs, criterion, weights, bm, args.dt)
+                if not torch.isfinite(loss):
+                    raise FloatingPointError("Nonfinite loss at epoch %d" % epoch)
+                loss.backward()
+                norm = torch.nn.utils.clip_grad_norm_(params, args.gradclip, error_if_nonfinite=True)
+                optimizer.step()
+                if not all(torch.isfinite(p).all() for p in params):
+                    raise FloatingPointError("Nonfinite parameters at epoch %d" % epoch)
+                seconds = time.perf_counter() - t0
+                writer.writerow([epoch, float(loss), float(norm), seconds])
+                if epoch == 1 or epoch % args.log_every == 0 or epoch == args.epochs:
+                    print("epoch=%d loss=%.7g seconds=%.3f" % (epoch, loss, seconds), flush=True)
+                if epoch % args.checkpoint_every == 0 or epoch == args.epochs:
+                    save_checkpoint(out / "checkpoint.pt", model, optimizer, epoch, config)
+        training_seconds = time.perf_counter() - start
+        # A fresh Brownian tree with the same entropy also verifies end-of-fit fit,
+        # rather than mislabeling the last pre-update loss as the final objective.
+        with torch.no_grad():
+            ys = torchsde.sdeint(model, y0, times, method="euler", dt=args.dt,
+                                bm=make_brownian(y0, times, args.seed + 10000))
+            final_loss = sum(w * criterion(y, x) for w, y, x in zip(weights, ys, xs))
+        metrics = evaluate(model, path, interp_path, xs, scale, args.seed, args.dt, out)
+        summary = {"epochs": args.epochs, "epochs_this_invocation": args.epochs - epoch0,
+                   "training_seconds_this_invocation": training_seconds,
+                   "final_training_loss": float(final_loss),
+                   "interp_mean_mmd2": float(np.mean([r["mmd2"] for r in metrics if r["protocol"] == "interp"]))}
+        write_json(out / "summary.json", summary)
+        print(json.dumps(summary), flush=True)
+    except Exception as error:
+        write_json(out / ("failure_%d.json" % time.time_ns()),
+                   {"type": type(error).__name__, "message": str(error)})
+        raise
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--task", choices=STEMS, required=True)
+    p.add_argument("--drift", choices=["structured", "mlp"], required=True)
+    p.add_argument("--seed", type=int, required=True)
+    p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--data-root", type=Path, default=REPO / "data")
+    p.add_argument("--epochs", type=int, default=1000)
+    p.add_argument("--lr", type=float, default=0.0025)
+    p.add_argument("--dt", type=float, default=0.001)
+    p.add_argument("--gradclip", type=float, default=1.)
+    p.add_argument("--threads", type=int, default=1)
+    p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    p.add_argument("--checkpoint-every", type=int, default=25)
+    p.add_argument("--log-every", type=int, default=5)
+    p.add_argument("--resume", action="store_true")
+    args = p.parse_args()
+    for key in ["epochs", "lr", "dt", "gradclip", "threads", "checkpoint_every", "log_every"]:
+        if getattr(args, key) <= 0:
+            p.error("--%s must be positive" % key.replace("_", "-"))
+    return args
+
+
+if __name__ == "__main__":
+    run(parse_args())

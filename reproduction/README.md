@@ -60,3 +60,18 @@ Tasks: `LV` (Lotka–Volterra), `ReprParam` / `ReprSemiparam` (repressilator, pa
 - **SBIRR package.** The SB references in `checkpoints/schrodinger_bridge` are pickled objects of the SBIRR code (the code release of Shen et al., 2025, folder `package/`). Their forecasts propagated from the last snapshot (App. D.3) are shipped in `outputs/SBIRR-ref (last snapshot)` and `outputs/SB-forward (last snapshot)`.
 - **PI-SDE licence.** The PI-SDE repository has no licence, so its code is not redistributed here; `fit/baselines/particle_simulation/fetch_pisde.sh` downloads it at a fixed commit and applies our patch.
 - **Diverged runs.** Two of the ten fully neural ReprSemiparam fits (seeds 2 and 43) diverge during training (their checkpoints contain non-finite parameters); they are left out of App. E.2, as stated there.
+# Additional saved-checkpoint evaluations
+
+`code/parameter_recovery.py` reports scalar estimates in physical time and drift/covariance
+errors on the nine existing synthetic validation snapshots. It reads saved main-model
+checkpoints, performs no training, and requires a new output directory:
+
+```bash
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
+python reproduction/code/parameter_recovery.py --out /path/to/new/parameter-results
+```
+
+Run from the repository root with the reproduction environment and installed `package/`.
+The output includes input hashes, reproduction checks, failures, per-fit tables and
+summary tables. Spread is across saved fits on one dataset. The latent protein scale
+and the semiparametric diffusion-family mismatch are flagged explicitly.

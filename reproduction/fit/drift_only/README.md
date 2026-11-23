@@ -108,6 +108,81 @@ Overrides: `SNAPMMD_REPO` (code root), `SNAPMMD_PYTHON` (Python executable),
 Defaults write results under `/mnt/ceph/users/$USER/snapmmd-runs/<stage>/<array-id>/`.
 The launcher does not send email or interact with other projects.
 
+## Learned state-dependent diffusion and learning-rate comparison
+
+The opt-in `--diffusion learned_state` mode retains the paper's
+`g(x) = exp(log_sigma) * relu(x)`: **one positive scalar shared across coordinates**,
+jointly fitted with the drift. Its initial solver-time amplitude is 0.03,
+as in the original structured fits; physical amplitude is solver amplitude
+divided by `sqrt(time_scale)`. This differs from both the frozen-true-diffusion
+experiment and the published MLP ablation's learned constant diagonal diffusion.
+The original `fixed_true` mode remains the default.
+
+Submit the learned-diffusion batch from the repository root using the existing
+CUDA environment:
+
+```bash
+sbatch reproduction/fit/drift_only/rusty_learned_gpu.sbatch
+```
+
+| Array index | Task | Drift | Learning rate | Epochs | Gradient clip |
+|---|---|---|---|---|---|
+| 0 | ReprParam | Structured, original recipe | 0.05 constant | 800 | None |
+| 1–2 | LV, ReprParam | MLP | 0.0025 constant | 1,000 | 1 |
+| 3–4 | LV, ReprParam | MLP | 0.001 constant | 1,000 | 1 |
+| 5–6 | LV, ReprParam | MLP | 0.01 constant | 1,000 | 1 |
+| 7–8 | LV, ReprParam | MLP | 0.01 to 0.0001 cosine | 1,000 | 1 |
+
+All nine jobs are fresh seed-1 fits with explicit Brownian noise, paired between
+configurations within each task. The
+structured control retains the paper's model, initial guesses, learning rate,
+epoch count, absence of clipping, and solver settings. Historical Brownian seeds
+were not recorded: comparable fit quality is the control, not identical saved
+particles. MLP initialization uses the run seed, whereas the historical MLP
+script hard-coded initialization seed 0. Paper checkpoints are never replaced.
+All MLP configurations use identical initial weights and diffusion amplitude.
+
+Each job requests one H100, one CPU thread, 8 GB RAM, and two hours; at most two
+jobs run together. Maximum allocation is **18 GPU-hours**. Previous measurements
+suggest about 12–13 training GPU-hours, but learned-diffusion runtime and queue
+availability still need confirmation. A one-seed configuration comparison does
+not supply fit-seed uncertainty. No held-out score selects a checkpoint or
+training setting; final-epoch predictions and failures are retained for all runs.
+
+An optional short smoke batch must use a separate stage:
+
+```bash
+sbatch --time=00:10:00 \
+  --export=ALL,SNAPMMD_EPOCHS=20,SNAPMMD_STAGE=learned-state-pilot-gpu \
+  reproduction/fit/drift_only/rusty_learned_gpu.sbatch
+```
+
+Results go to
+`/mnt/ceph/users/$USER/snapmmd-runs/learned-state-full-gpu/<array-id>/`.
+Logs are `slurm-drift-learned-<array-id>_<index>.out` in the submission directory.
+From any directory, inspect completion and metrics using the actual array ID:
+
+```bash
+sacct -j JOB_ID --format=JobID%24,State,Elapsed,ExitCode
+snapmmd_run="/mnt/ceph/users/$USER/snapmmd-runs/learned-state-full-gpu/JOB_ID"
+tail -n +1 "$snapmmd_run"/*/summary.json
+tail -n +1 "$snapmmd_run"/*/metrics.csv
+```
+
+The trainer records the learning rate **used** for each update, the scheduler
+state, and initial/final sigma in both time units. Cosine scheduling has no
+restarts, runs for exactly `--epochs` optimizer steps, and reaches `--min-lr`
+after the final update. To resume an interrupted cosine run, retain its original
+`--epochs` (the schedule horizon), all other settings, and source checkout;
+pass its existing output directory with `--resume`. Do not extend a cosine run
+by changing the horizon. Completed outputs and incompatible resumes are rejected.
+Old pre-extension checkpoints must be resumed from their original code revision.
+`training_summary.json` records completed fitting even if later evaluation fails.
+Returned evaluation clouds are saved incrementally to `predictions.partial.npz`
+before finiteness and metric checks; successful evaluation replaces this with
+`predictions.npz`. A solver exception can prevent the current cloud from being
+returned, but earlier clouds, checkpoints, and failure metadata are retained.
+
 ## GPU pilot
 
 The MLPs have 322 (LV) and 451 (repressilator) trainable parameters, but each epoch

@@ -76,7 +76,7 @@ finishes, or submit from a separate worktree pinned to the reviewed commit.
 | 2 | LV | lv_saturated |
 | 3 | ReprParam | repr_exponential |
 
-Each task uses one H100, one CPU core, 8 GB RAM and a two-hour limit; two tasks
+Each task uses one H100, one CPU core, 8 GB RAM and a two-hour limit; four tasks
 may run concurrently. Four jobs cap allocation at eight GPU-hours. All train
 for 1,000 epochs with seed 1, lr 0.01, clipping 1 and learned-state diffusion.
 The CUDA preflight fails if no GPU is available; there is no CPU fallback.

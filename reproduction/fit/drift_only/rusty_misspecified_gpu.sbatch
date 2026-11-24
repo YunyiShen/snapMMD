@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Four misspecified-drift fits, one H100 each, two concurrent, <=8 GPU-hours.
+# Four misspecified-drift fits, one H100 each, four concurrent, <=8 GPU-hours.
 # Submit from the repository root with SNAPMMD_EXPECT_COMMIT pinned.
 #SBATCH --job-name=drift-misspecified
 #SBATCH --partition=gpu
@@ -10,7 +10,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --time=02:00:00
-#SBATCH --array=0-3%2
+#SBATCH --array=0-3%4
 #SBATCH --output=slurm-%x-%A_%a.out
 
 set -euo pipefail

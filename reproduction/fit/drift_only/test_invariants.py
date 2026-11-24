@@ -280,6 +280,148 @@ class Invariants(unittest.TestCase):
             with patch("sys.argv", base + extra), self.assertRaises(SystemExit):
                 train.parse_args()
 
+    def test_misspecified_formulas_and_units(self):
+        x = torch.tensor([[.3, 1.2], [2., .7]], dtype=torch.float64)
+        model = train.make_model("LV", "lv_saturated", 9., 1, "learned_state", 1.5).double()
+        alpha, beta, gamma, delta = [float(getattr(model.drift, k).exp())
+                                      for k in ["alpha", "beta", "gamma", "delta"]]
+        z = x.numpy() + 1e-10
+        predation = z[:, 0] * z[:, 1] / (1 + z[:, 0] / 1.5)
+        expected = np.column_stack([alpha*z[:, 0]-beta*predation,
+                                    delta*predation-gamma*z[:, 1]])
+        np.testing.assert_allclose(model.f(0., x).detach(), expected, rtol=1e-14)
+        self.assertNotIn("drift.saturation_scale", dict(model.named_parameters()))
+        self.assertIn("drift.saturation_scale", model.state_dict())
+        # At x=K the interaction is half its bilinear counterpart.
+        k = model.drift.saturation_scale
+        self.assertEqual(float(k * 2. / (1. + k / k)), float(k))
+        # Disabling saturation in test-only algebra must recover the classic drift.
+        classic = train.make_model("LV", "structured", 9., 1, "learned_state").double()
+        uncapped = np.column_stack([alpha*z[:, 0]-beta*z[:, 0]*z[:, 1],
+                                    delta*z[:, 0]*z[:, 1]-gamma*z[:, 1]])
+        np.testing.assert_allclose(classic.f(0., x).detach(), uncapped, rtol=1e-14)
+        for task, arm, dim, scale in [("LV", "lv_saturated", 2, 9.),
+                                       ("ReprParam", "repr_exponential", 3, 10.)]:
+            kwargs = {"saturation_scale": 1.5} if dim == 2 else {}
+            a = train.make_model(task, arm, scale, 1, "learned_state", **kwargs).double()
+            b = train.make_model(task, arm, 2*scale, 1, "learned_state", **kwargs).double()
+            values = torch.tensor([[.3, 1.2, 2.], [2., .7, .4]], dtype=torch.float64)[:, :dim]
+            torch.testing.assert_close(a.f(0., values)/scale, b.f(0., values)/(2*scale), rtol=2e-7, atol=1e-8)
+        x3 = torch.tensor([[.3, 1.2, 2.], [-1., 0., .5]], dtype=torch.float64)
+        z3 = x3.numpy().clip(0) + 1e-8
+        exp_model = train.make_model("ReprParam", "repr_exponential", 10., 1, "learned_state").double()
+        beta, k, gamma = [float(getattr(exp_model.drift, key).exp()) for key in ["beta", "k", "gamma"]]
+        expected = np.empty_like(z3)
+        for i, parent in enumerate([2, 0, 1]):
+            expected[:, i] = beta*np.exp(-z3[:, parent]/k)-gamma*z3[:, i]
+        np.testing.assert_allclose(exp_model.f(0., x3).detach(), expected, rtol=1e-14)
+        for task, dim, scale in [("LV", 2, 9.), ("ReprParam", 3, 10.)]:
+            affine = train.make_model(task, "affine", scale, 1, "learned_state").double()
+            values = x3[:, :dim]
+            expected = values.numpy() @ affine.drift.weight.detach().numpy().T + affine.drift.bias.detach().numpy()
+            np.testing.assert_allclose(affine.f(0., values).detach(), expected, rtol=1e-14)
+            self.assertEqual(sum(p.numel() for p in affine.parameters()), dim*(dim+1)+1)
+
+    def test_misspecified_gpu_launcher(self):
+        launcher = Path(train.__file__).with_name("rusty_misspecified_gpu.sbatch")
+        env = dict(os.environ, SNAPMMD_REPO=str(train.REPO), SNAPMMD_DRY_RUN="1", SLURM_ARRAY_JOB_ID="123")
+        for key in ["SNAPMMD_STAGE", "SNAPMMD_EPOCHS", "SNAPMMD_EXPECT_COMMIT"]:
+            env.pop(key, None)
+        expected = [("LV", "affine"), ("ReprParam", "affine"), ("LV", "lv_saturated"), ("ReprParam", "repr_exponential")]
+        outputs = []
+        for index, pair in enumerate(expected):
+            result = subprocess.run(["bash", str(launcher)], env=dict(env, SLURM_ARRAY_TASK_ID=str(index)),
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            command = shlex.split(result.stdout)
+            options = dict(zip(command[2::2], command[3::2]))
+            self.assertEqual((options["--task"], options["--drift"]), pair)
+            for key, value in [("--epochs", "1000"), ("--lr", "0.01"), ("--gradclip", "1.0"),
+                               ("--diffusion", "learned_state"), ("--seed", "1"), ("--device", "cuda"),
+                               ("--threads", "1"), ("--schedule", "constant")]:
+                self.assertEqual(options[key], value)
+            outputs.append(options["--output"])
+        self.assertEqual(len(set(outputs)), 4)
+        for changes in [{"SLURM_ARRAY_TASK_ID": "4"}, {"SLURM_ARRAY_TASK_ID": "-1"},
+                        {"SLURM_ARRAY_TASK_ID": "0", "SNAPMMD_EPOCHS": "8"},
+                        {"SLURM_ARRAY_TASK_ID": "0", "SNAPMMD_EPOCHS": "8", "SNAPMMD_STAGE": "misspecified-full-gpu/"},
+                        {"SLURM_ARRAY_TASK_ID": "0", "SNAPMMD_STAGE": "../other"},
+                        {"SLURM_ARRAY_TASK_ID": "0", "SNAPMMD_EPOCHS": "0", "SNAPMMD_STAGE": "smoke"}]:
+            result = subprocess.run(["bash", str(launcher)], env=dict(env, **changes),
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(result.returncode, 0)
+        smoke = subprocess.run(["bash", str(launcher)],
+                               env=dict(env, SLURM_ARRAY_TASK_ID="0", SNAPMMD_EPOCHS="8", SNAPMMD_STAGE="smoke"),
+                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        self.assertIn("--epochs 8", smoke.stdout)
+        mismatch = subprocess.run(["bash", str(launcher)],
+                                  env=dict(env, SLURM_ARRAY_TASK_ID="0", SNAPMMD_DRY_RUN="0", SNAPMMD_EXPECT_COMMIT="0"*40),
+                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(mismatch.returncode, 0)
+        self.assertIn("Checkout changed", mismatch.stderr)
+
+    def test_training_scale_and_new_family_guards(self):
+        source = train.REPO / "data/classic/LV_data.npz"
+        xs, _, _ = train.load_training(source)
+        k = train.training_saturation_scale(xs)
+        self.assertEqual(k, float(np.median(xs[..., 0].numpy())))
+        with np.load(source) as z:
+            data = {key: z[key].copy() for key in z.files}
+        data["Xs"][-1] = -1e12
+        with tempfile.TemporaryDirectory() as directory:
+            changed = Path(directory) / "changed.npz"
+            np.savez(changed, **data)
+            other, _, _ = train.load_training(changed)
+        self.assertEqual(k, train.training_saturation_scale(other))
+        for bad in [torch.zeros_like(xs), torch.full_like(xs, float("nan"))]:
+            with self.assertRaises(ValueError):
+                train.training_saturation_scale(bad)
+        for task, arm, diffusion, kval in [("LV", "repr_exponential", "learned_state", None),
+                                           ("ReprParam", "lv_saturated", "learned_state", k),
+                                           ("LV", "affine", "fixed_true", None),
+                                           ("LV", "lv_saturated", "learned_state", None)]:
+            with self.assertRaises(ValueError):
+                train.make_model(task, arm, 9., 1, diffusion, kval)
+
+    def test_new_family_gradients_and_checkpoint_resume(self):
+        for task, arm, dim, scale in [("LV", "affine", 2, 9.), ("ReprParam", "affine", 3, 10.),
+                                       ("LV", "lv_saturated", 2, 9.), ("ReprParam", "repr_exponential", 3, 10.)]:
+            kwargs = {"saturation_scale": 1.5} if arm == "lv_saturated" else {}
+            torch.manual_seed(41)
+            xs = torch.rand(3, 6, dim) + .4
+            times = torch.tensor([0., .002, .004])
+            y0 = xs[0].repeat(2, 1)
+            criterion, weights = train.training_objective(xs)
+            model = train.make_model(task, arm, scale, 1, "learned_state", **kwargs)
+            optimizer = torch.optim.Adam(model.parameters(), lr=.01)
+
+            def step(m, opt):
+                opt.zero_grad()
+                loss = train.objective(m, y0, times, xs, criterion, weights,
+                                       train.make_brownian(y0, times, 17), .001)
+                loss.backward()
+                for name, parameter in m.named_parameters():
+                    self.assertIsNotNone(parameter.grad, (arm, name))
+                    self.assertTrue(torch.isfinite(parameter.grad).all(), (arm, name))
+                    self.assertGreater(float(parameter.grad.abs().sum()), 0., (arm, name))
+                train.gradient_norm(list(m.parameters()), 1.)
+                opt.step()
+
+            step(model, optimizer)
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "checkpoint.pt"
+                train.save_checkpoint(path, model, optimizer, 1, {"family": arm})
+                state = torch.load(path)
+            restored = train.make_model(task, arm, scale, 2, "learned_state", **kwargs)
+            restored.load_state_dict(state["model"])
+            opt2 = torch.optim.Adam(restored.parameters(), lr=.01)
+            opt2.load_state_dict(state["optimizer"])
+            step(model, optimizer)
+            step(restored, opt2)
+            for name, value in model.state_dict().items():
+                torch.testing.assert_close(value, restored.state_dict()[name], rtol=0, atol=0)
+            if arm == "lv_saturated":
+                self.assertEqual(float(model.drift.saturation_scale), 1.5)
+
 
 if __name__ == "__main__":
     unittest.main()

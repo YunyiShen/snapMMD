@@ -26,10 +26,12 @@ sys.path.insert(0, str(REPO / "reproduction/code"))
 from snapMMD.dls import MMDLoss, RBF
 from models.classic import LotkaVolterra, repressilator
 from common import mmd2, emd
+from misspecified import SaturatingLV, ExponentialRepressilator, training_saturation_scale
 
 STEMS = {"LV": "LV", "ReprParam": "Repressilator"}
 SEEDS = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
 HISTORY_FIELDS = ["epoch", "loss_before_update", "grad_norm", "seconds", "learning_rate"]
+MISSPECIFIED = {"affine", "lv_saturated", "repr_exponential"}
 
 
 class FixedDiffusionSDE(nn.Module):
@@ -68,9 +70,17 @@ class LearnedStateDiffusionSDE(nn.Module):
         return self.sigma.exp() * torch.relu(y)
 
 
-def make_model(task, arm, time_scale, seed, diffusion="fixed_true"):
+def make_model(task, arm, time_scale, seed, diffusion="fixed_true", saturation_scale=None):
     if diffusion not in ("fixed_true", "learned_state"):
         raise ValueError("Unknown diffusion mode")
+    if task not in STEMS or arm not in {"structured", "mlp"} | MISSPECIFIED:
+        raise ValueError("Unknown task or drift family")
+    if arm in MISSPECIFIED and diffusion != "learned_state":
+        raise ValueError("Misspecified drift fits require --diffusion learned_state")
+    if (arm == "lv_saturated" and task != "LV") or (arm == "repr_exponential" and task != "ReprParam"):
+        raise ValueError("Drift family is incompatible with the task")
+    if arm != "lv_saturated" and saturation_scale is not None:
+        raise ValueError("Saturation scale only applies to lv_saturated")
     torch.manual_seed(seed)
     if arm == "structured":
         if task == "LV":
@@ -81,11 +91,20 @@ def make_model(task, arm, time_scale, seed, diffusion="fixed_true"):
             return drift  # Use the original paper model, including its learned g.
         # The frozen wrapper bypasses the old g; never optimize its unused sigma.
         drift.sigma.requires_grad_(False)
-    else:
+    elif arm == "mlp":
         dim = 2 if task == "LV" else 3
         # Same architecture and initialization distribution as the old MLP;
         # use this run's seed instead of its historical hard-coded seed 0.
         drift = nn.Sequential(nn.Linear(dim, 64), nn.ReLU(), nn.Linear(64, dim))
+    elif arm == "affine":
+        dim = 2 if task == "LV" else 3
+        drift = nn.Linear(dim, dim)  # Raw signed states: no activation or clipping.
+    elif arm == "lv_saturated":
+        if saturation_scale is None:
+            raise ValueError("Saturated LV requires a fixed training-derived scale")
+        drift = SaturatingLV(saturation_scale, time_scale)
+    else:
+        drift = ExponentialRepressilator(time_scale)
     if diffusion == "learned_state":
         return LearnedStateDiffusionSDE(drift)
     return FixedDiffusionSDE(drift, arm, time_scale)
@@ -247,7 +266,9 @@ def run(args):
     path = args.data_root / "classic" / (STEMS[args.task] + "_data.npz")
     interp_path = path.with_name(path.stem + "_interp_val.npz")
     xs, times, scale = load_training(path, args.device)
-    model = make_model(args.task, args.drift, scale, args.seed, args.diffusion).to(args.device)
+    saturation_scale = training_saturation_scale(xs) if args.drift == "lv_saturated" else None
+    model = make_model(args.task, args.drift, scale, args.seed, args.diffusion,
+                       saturation_scale=saturation_scale).to(args.device)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.Adam(params, lr=args.lr)
     scheduler = make_scheduler(optimizer, args.schedule, args.epochs, args.min_lr)
@@ -256,6 +277,8 @@ def run(args):
     bm = make_brownian(y0, times, args.seed + 10000)
     source_paths = [Path(__file__).resolve(), REPO / "package/snapMMD/dls.py",
                     REPO / "reproduction/code/models/classic.py", REPO / "reproduction/code/common.py"]
+    if args.drift in MISSPECIFIED:
+        source_paths.append(Path(__file__).resolve().with_name("misspecified.py"))
     config = {
         "task": args.task, "drift": args.drift, "seed": args.seed,
         "epochs_policy": "fixed budget; no target-based selection", "lr": args.lr,
@@ -280,6 +303,12 @@ def run(args):
         "versions": {"python": platform.python_version(), "torch": str(torch.__version__),
                      "torchsde": torchsde.__version__, "numpy": np.__version__},
     }
+    if args.drift in MISSPECIFIED:
+        config["drift_initial_state"] = {name: value.detach().cpu().tolist()
+                                          for name, value in model.drift.state_dict().items()}
+        config["drift_parameter_units"] = "solver-time rates; state scales unchanged"
+        config["saturation_scale"] = saturation_scale
+        config["saturation_scale_rule"] = "median of all training prey coordinates" if saturation_scale is not None else None
     out = args.output.resolve()
     epoch0 = 0
     if args.resume:
@@ -394,7 +423,7 @@ def optional_clip(value):
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--task", choices=STEMS, required=True)
-    p.add_argument("--drift", choices=["structured", "mlp"], required=True)
+    p.add_argument("--drift", choices=["structured", "mlp", "affine", "lv_saturated", "repr_exponential"], required=True)
     p.add_argument("--diffusion", choices=["fixed_true", "learned_state"], default="fixed_true")
     p.add_argument("--seed", type=int, required=True)
     p.add_argument("--output", type=Path, required=True)
@@ -420,6 +449,10 @@ def parse_args():
         p.error("--min-lr must be finite and nonnegative")
     if args.schedule == "cosine" and args.min_lr >= args.lr:
         p.error("cosine --min-lr must be smaller than --lr")
+    if args.drift in MISSPECIFIED and args.diffusion != "learned_state":
+        p.error("misspecified drifts require --diffusion learned_state")
+    if (args.drift == "lv_saturated" and args.task != "LV") or (args.drift == "repr_exponential" and args.task != "ReprParam"):
+        p.error("drift family is incompatible with --task")
     return args
 
 

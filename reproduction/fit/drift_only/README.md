@@ -1,4 +1,105 @@
-# Drift-family comparison with fixed diffusion
+# Drift-family comparisons
+
+## Structurally misspecified drifts with learned diffusion
+
+Four additional fits use seed 1, constant Adam lr 0.01, 1,000 epochs, gradient
+clipping 1, and the same learned scalar state-dependent diffusion as the original
+structured family. They reuse the data, loss, particles, solver and evaluation
+protocol below. These are one-seed exploratory fits, not a convergence study.
+
+- `affine` on LV and ReprParam: an unrestricted `A x + c`, implemented by one
+  linear layer with ordinary seed-1 initialization. It uses raw signed states
+  without an input/output activation or a stability constraint.
+- `lv_saturated` on LV: replace both `xy` interactions by `xy/(1+x/K)`.
+  K is fixed to the median prey coordinate over the training snapshots only;
+  the four positive rates are learned. An unrestricted learned K could undo
+  the intended misspecification by becoming arbitrarily large.
+- `repr_exponential` on ReprParam: `beta*exp(-x_parent/k)-gamma*x_i`, with
+  parents `[2,0,1]` and positive shared beta/k/gamma. This has three drift
+  parameters versus the original Hill family's four. The two mechanistic
+  families retain the original positive-state extension of their drift inputs.
+
+All four require `--diffusion learned_state`: `sigma*relu(x)` with one positive
+learned scalar initialized at 0.03 in solver units. State scales K and k do not
+change with the time unit; drift rates do. Affine matrices/intercepts are in
+solver units and divide by the task's time scale for physical units. Negative
+or extreme simulated particles are retained in evaluation, not clipped away.
+
+For short local checks, from the repository root with distinct new directories:
+
+```bash
+python reproduction/fit/drift_only/train.py --task LV --drift affine \
+  --diffusion learned_state --seed 1 --lr 0.01 --epochs 8 --gradclip 1 \
+  --device cpu --threads 1 --output /tmp/misspecified-smoke-v1/LV_affine_s1
+python reproduction/fit/drift_only/train.py --task ReprParam --drift affine \
+  --diffusion learned_state --seed 1 --lr 0.01 --epochs 8 --gradclip 1 \
+  --device cpu --threads 1 --output /tmp/misspecified-smoke-v1/ReprParam_affine_s1
+python reproduction/fit/drift_only/train.py --task LV --drift lv_saturated \
+  --diffusion learned_state --seed 1 --lr 0.01 --epochs 8 --gradclip 1 \
+  --device cpu --threads 1 --output /tmp/misspecified-smoke-v1/LV_lv_saturated_s1
+python reproduction/fit/drift_only/train.py --task ReprParam --drift repr_exponential \
+  --diffusion learned_state --seed 1 --lr 0.01 --epochs 8 --gradclip 1 \
+  --device cpu --threads 1 --output /tmp/misspecified-smoke-v1/ReprParam_repr_exponential_s1
+```
+
+First use a separate output root and a short epoch budget to check runtime and
+numerical behavior. The fixed K, initial parameter state, model source hash and
+all normal provenance are saved. Resume checks reject changed configuration,
+source or data. Compare both W2 and MMD², interpolation and first/last-start
+forecasts, training curves, physical sigma and raw-cloud diagnostics. Historical
+structured fits used a different optimization recipe; they are descriptive
+references rather than matched optimization controls for these new fits.
+
+### Full misspecified fits on Rusty
+
+Use the existing `~/venvs/snapmmd-drift-cuda` environment from the learned-state
+GPU experiment; no package/environment change is needed. After the source is
+published, pull the reviewed commit on `aistats-revision` and submit from the
+repository root. Set the expected full commit hash from the reviewed release:
+
+```bash
+git pull --ff-only
+export SNAPMMD_EXPECT_COMMIT="FULL_REVIEWED_COMMIT_HASH"
+test "$(git rev-parse HEAD)" = "$SNAPMMD_EXPECT_COMMIT"
+sbatch --export=ALL,SNAPMMD_EXPECT_COMMIT,SNAPMMD_EPOCHS=1000,SNAPMMD_STAGE=misspecified-full-gpu \
+  reproduction/fit/drift_only/rusty_misspecified_gpu.sbatch
+```
+
+The expected-commit check is repeated when each job starts. Relevant source
+files must be committed and unchanged. Keep the checkout fixed until the array
+finishes, or submit from a separate worktree pinned to the reviewed commit.
+
+| Array ID | Task | Drift |
+|---|---|---|
+| 0 | LV | affine |
+| 1 | ReprParam | affine |
+| 2 | LV | lv_saturated |
+| 3 | ReprParam | repr_exponential |
+
+Each task uses one H100, one CPU core, 8 GB RAM and a two-hour limit; two tasks
+may run concurrently. Four jobs cap allocation at eight GPU-hours. All train
+for 1,000 epochs with seed 1, lr 0.01, clipping 1 and learned-state diffusion.
+The CUDA preflight fails if no GPU is available; there is no CPU fallback.
+
+Default output root:
+`/mnt/ceph/users/$USER/snapmmd-runs/misspecified-full-gpu/<array-job-id>/`.
+Logs: `slurm-drift-misspecified-<array-job-id>_<array-id>.out` in the submission
+directory. Each fit has a distinct task/drift/seed directory and the usual raw
+predictions, scores, checkpoint, history, configuration and failure records.
+
+For an optional eight-epoch Rusty check, use a separate stage and shorter limit:
+
+```bash
+sbatch --time=00:10:00 \
+  --export=ALL,SNAPMMD_EXPECT_COMMIT,SNAPMMD_EPOCHS=8,SNAPMMD_STAGE=misspecified-smoke-gpu \
+  reproduction/fit/drift_only/rusty_misspecified_gpu.sbatch
+```
+
+The launcher rejects an epoch override with the default full-fit stage. Do not
+select hyperparameters using smoke evaluation metrics. Inspect jobs with
+`sacct -X -j <array-job-id> --format=JobID%24,State,Elapsed,ExitCode`.
+
+## Original comparison with fixed diffusion
 
 Two models fit the same released LV or repressilator snapshots with the same
 SnapMMD objective and **known, frozen state-dependent diffusion**. The structured

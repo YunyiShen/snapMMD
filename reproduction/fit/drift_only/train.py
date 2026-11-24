@@ -26,12 +26,15 @@ sys.path.insert(0, str(REPO / "reproduction/code"))
 from snapMMD.dls import MMDLoss, RBF
 from models.classic import LotkaVolterra, repressilator
 from common import mmd2, emd
-from misspecified import SaturatingLV, ExponentialRepressilator, training_saturation_scale
+from misspecified import (SaturatingLV, ExponentialRepressilator, training_saturation_scale,
+                          training_lv_followup_scales)
 
 STEMS = {"LV": "LV", "ReprParam": "Repressilator"}
 SEEDS = [1, 2, 3, 4, 5, 40, 41, 42, 43, 44]
 HISTORY_FIELDS = ["epoch", "loss_before_update", "grad_norm", "seconds", "learning_rate"]
-MISSPECIFIED = {"affine", "lv_saturated", "repr_exponential"}
+LV_FOLLOWUP = {"lv_saturated_calibrated", "lv_logistic_saturated"}
+LV_SATURATED = {"lv_saturated"} | LV_FOLLOWUP
+MISSPECIFIED = {"affine", "repr_exponential"} | LV_SATURATED
 
 
 class FixedDiffusionSDE(nn.Module):
@@ -70,17 +73,22 @@ class LearnedStateDiffusionSDE(nn.Module):
         return self.sigma.exp() * torch.relu(y)
 
 
-def make_model(task, arm, time_scale, seed, diffusion="fixed_true", saturation_scale=None):
+def make_model(task, arm, time_scale, seed, diffusion="fixed_true", saturation_scale=None,
+               reference_prey=None, carrying_capacity=None):
     if diffusion not in ("fixed_true", "learned_state"):
         raise ValueError("Unknown diffusion mode")
     if task not in STEMS or arm not in {"structured", "mlp"} | MISSPECIFIED:
         raise ValueError("Unknown task or drift family")
     if arm in MISSPECIFIED and diffusion != "learned_state":
         raise ValueError("Misspecified drift fits require --diffusion learned_state")
-    if (arm == "lv_saturated" and task != "LV") or (arm == "repr_exponential" and task != "ReprParam"):
+    if (arm in LV_SATURATED and task != "LV") or (arm == "repr_exponential" and task != "ReprParam"):
         raise ValueError("Drift family is incompatible with the task")
-    if arm != "lv_saturated" and saturation_scale is not None:
-        raise ValueError("Saturation scale only applies to lv_saturated")
+    if arm not in LV_SATURATED and saturation_scale is not None:
+        raise ValueError("Saturation scale only applies to saturated LV families")
+    if (arm in LV_FOLLOWUP) != (reference_prey is not None):
+        raise ValueError("A reference prey is required only for calibrated LV families")
+    if (arm == "lv_logistic_saturated") != (carrying_capacity is not None):
+        raise ValueError("A carrying capacity is required only for logistic saturated LV")
     torch.manual_seed(seed)
     if arm == "structured":
         if task == "LV":
@@ -99,10 +107,11 @@ def make_model(task, arm, time_scale, seed, diffusion="fixed_true", saturation_s
     elif arm == "affine":
         dim = 2 if task == "LV" else 3
         drift = nn.Linear(dim, dim)  # Raw signed states: no activation or clipping.
-    elif arm == "lv_saturated":
+    elif arm in LV_SATURATED:
         if saturation_scale is None:
             raise ValueError("Saturated LV requires a fixed training-derived scale")
-        drift = SaturatingLV(saturation_scale, time_scale)
+        drift = SaturatingLV(saturation_scale, time_scale, reference_prey=reference_prey,
+                             carrying_capacity=carrying_capacity)
     else:
         drift = ExponentialRepressilator(time_scale)
     if diffusion == "learned_state":
@@ -170,8 +179,26 @@ def training_objective(xs):
     return criterion, weights
 
 
-def objective(model, y0, times, xs, criterion, weights, bm, dt):
+def begin_trajectory(diagnostics, phase, times, units="solver"):
+    if diagnostics is not None:
+        diagnostics.update(phase=phase, _trajectory=None, _trajectory_times=times,
+                           trajectory_time_units=units,
+                           trajectory_model_epoch=diagnostics.get("last_successful_epoch"))
+
+
+def check_trajectory(ys, diagnostics):
+    if diagnostics is not None:
+        diagnostics["_trajectory"] = ys.detach()
+        if not torch.isfinite(ys).all():
+            raise FloatingPointError("Nonfinite trajectory during " + diagnostics["phase"])
+
+
+def objective(model, y0, times, xs, criterion, weights, bm, dt, diagnostics=None):
+    begin_trajectory(diagnostics, "training_trajectory", times)
     ys = torchsde.sdeint_adjoint(model, y0, times, bm=bm, method="euler", dt=dt)
+    check_trajectory(ys, diagnostics)
+    if diagnostics is not None:
+        diagnostics["phase"] = "training_loss"
     return sum(w * criterion(y, x) for w, y, x in zip(weights, ys, xs))
 
 
@@ -203,8 +230,65 @@ def save_checkpoint(path, model, optimizer, epoch, config, scheduler=None):
     tmp.replace(path)
 
 
+def trajectory_ranges(ys, times):
+    """JSON-safe ranges, retaining nonfinite counts and excluding no particles."""
+    values = ys.detach().cpu().double().numpy()
+    if torch.is_tensor(times):
+        times = times.detach().cpu().numpy()
+    rows = []
+    for t, cloud in zip(times, values):
+        finite = np.isfinite(cloud)
+        complete = finite.all(axis=1)
+        low, high = [], []
+        for j in range(cloud.shape[1]):
+            column = cloud[finite[:, j], j]
+            low.append(float(column.min()) if len(column) else None)
+            high.append(float(column.max()) if len(column) else None)
+        rows.append({"time": float(t), "particles": len(cloud),
+                     "nonfinite_entries": int((~finite).sum()),
+                     "nonfinite_particles": int((~complete).sum()),
+                     "negative_particles": int((cloud < 0).any(axis=1).sum()),
+                     "finite_coordinate_min": low, "finite_coordinate_max": high,
+                     "max_finite_particle_norm": float(np.linalg.norm(cloud[complete], axis=1).max())
+                         if complete.any() else None})
+    return rows
+
+
+def save_failure(out, model, optimizer, config, scheduler, diagnostics, error):
+    """Separate diagnostic artifacts; never overwrite the resumable checkpoint."""
+    stem = "failure_%d" % time.time_ns()
+    record = {k: v for k, v in diagnostics.items() if not k.startswith("_")}
+    record.update(type=type(error).__name__, message=str(error), diagnostic_errors=[])
+    checkpoint = out / (stem + ".pt")
+    try:
+        tmp = checkpoint.with_suffix(".tmp")
+        torch.save({"diagnostic_only": True, "model": model.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "scheduler": scheduler.state_dict() if scheduler is not None else None,
+                    "config": config, "failure_context": dict(record),
+                    "gradients": {name: p.grad.detach().cpu() for name, p in model.named_parameters()
+                                  if p.grad is not None}}, tmp)
+        tmp.replace(checkpoint)
+        record["failure_checkpoint"] = checkpoint.name
+    except Exception as save_error:
+        record["diagnostic_errors"].append("checkpoint: " + repr(save_error))
+    ys = diagnostics.get("_trajectory")
+    if ys is not None:
+        try:
+            times = diagnostics["_trajectory_times"]
+            record["trajectory_ranges"] = trajectory_ranges(ys, times)
+            if torch.is_tensor(times):
+                times = times.detach().cpu().numpy()
+            cloud_path = out / (stem + "_trajectory.npz")
+            np.savez_compressed(cloud_path, states=ys.detach().cpu().numpy(), times=np.asarray(times))
+            record["trajectory_artifact"] = cloud_path.name
+        except Exception as save_error:
+            record["diagnostic_errors"].append("trajectory: " + repr(save_error))
+    write_json(out / (stem + ".json"), record)
+
+
 @torch.no_grad()
-def evaluate(model, path, interp_path, xs, scale, seed, dt, out):
+def evaluate(model, path, interp_path, xs, scale, seed, dt, out, diagnostics=None):
     with np.load(path, allow_pickle=False) as z:
         truth = z["Xs"][-1].copy()
         last_t, target_t = map(float, z["dts"][-2:])
@@ -216,6 +300,7 @@ def evaluate(model, path, interp_path, xs, scale, seed, dt, out):
     rows = []
 
     def simulate(initial, physical_times, noise_seed, protocol):
+        begin_trajectory(diagnostics, "evaluation_" + protocol + "_trajectory", physical_times, "physical")
         ts = torch.tensor(physical_times / scale, dtype=initial.dtype, device=initial.device)
         bm = make_brownian(initial, ts, noise_seed)
         ys = torchsde.sdeint(model, initial, ts, method="euler", bm=bm, dt=dt)
@@ -224,6 +309,7 @@ def evaluate(model, path, interp_path, xs, scale, seed, dt, out):
         # Preserve every returned cloud before any finiteness/scoring failure.
         # If the solver itself raises, earlier protocols and the fitted checkpoint remain.
         np.savez_compressed(out / "predictions.partial.npz", **clouds, interp_times=interp_t)
+        check_trajectory(ys, diagnostics)
         if not torch.isfinite(ys).all():
             raise FloatingPointError("Nonfinite evaluation trajectory: " + protocol)
         return array
@@ -232,16 +318,22 @@ def evaluate(model, path, interp_path, xs, scale, seed, dt, out):
     clouds["forecast_first"] = simulate(xs[0], np.array([0., target_t]), seed + 20000, "forecast_first")[-1]
     clouds["forecast_last"] = simulate(xs[-1], np.array([last_t, target_t]), seed + 30000, "forecast_last")[-1]
     clouds["interp"] = simulate(xs[0], np.r_[0., interp_t], seed + 40000, "interp")[1:]
+
+    def score(protocol, t, target, cloud):
+        if diagnostics is not None:
+            begin_trajectory(diagnostics, "evaluation_" + protocol + "_metrics", np.array([t]), "physical")
+            diagnostics.update(_trajectory=torch.from_numpy(cloud[None]), metric_time=float(t))
+        scores = {"mmd2": float(mmd2(target, cloud)["snap"]), "w2": emd(target, cloud)}
+        if not all(math.isfinite(value) for value in scores.values()):
+            raise FloatingPointError("Nonfinite evaluation metric: " + protocol)
+        return dict(protocol=protocol, time=float(t), **scores)
+
     for protocol in ("forecast_first", "forecast_last"):
-        rows.append({"protocol": protocol, "time": target_t,
-                     "mmd2": float(mmd2(truth, clouds[protocol])["snap"]),
-                     "w2": emd(truth, clouds[protocol])})
+        rows.append(score(protocol, target_t, truth, clouds[protocol]))
     for t, target, cloud in zip(interp_t, interp_truth, clouds["interp"]):
-        rows.append({"protocol": "interp", "time": float(t),
-                     "mmd2": float(mmd2(target, cloud)["snap"]), "w2": emd(target, cloud)})
+        rows.append(score("interp", t, target, cloud))
     persistence = xs[-1].cpu().numpy()
-    rows.append({"protocol": "persistence_last", "time": target_t,
-                 "mmd2": float(mmd2(truth, persistence)["snap"]), "w2": emd(truth, persistence)})
+    rows.append(score("persistence_last", target_t, truth, persistence))
     np.savez_compressed(out / "predictions.npz", **clouds, interp_times=interp_t)
     (out / "predictions.partial.npz").unlink()
     with (out / "metrics.csv").open("w", newline="") as f:
@@ -266,9 +358,15 @@ def run(args):
     path = args.data_root / "classic" / (STEMS[args.task] + "_data.npz")
     interp_path = path.with_name(path.stem + "_interp_val.npz")
     xs, times, scale = load_training(path, args.device)
-    saturation_scale = training_saturation_scale(xs) if args.drift == "lv_saturated" else None
+    saturation_scale = training_saturation_scale(xs) if args.drift in LV_SATURATED else None
+    reference_prey, carrying_capacity = None, None
+    if args.drift in LV_FOLLOWUP:
+        saturation_scale, reference_prey, capacity = training_lv_followup_scales(xs)
+        if args.drift == "lv_logistic_saturated":
+            carrying_capacity = capacity
     model = make_model(args.task, args.drift, scale, args.seed, args.diffusion,
-                       saturation_scale=saturation_scale).to(args.device)
+                       saturation_scale=saturation_scale, reference_prey=reference_prey,
+                       carrying_capacity=carrying_capacity).to(args.device)
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.Adam(params, lr=args.lr)
     scheduler = make_scheduler(optimizer, args.schedule, args.epochs, args.min_lr)
@@ -309,6 +407,12 @@ def run(args):
         config["drift_parameter_units"] = "solver-time rates; state scales unchanged"
         config["saturation_scale"] = saturation_scale
         config["saturation_scale_rule"] = "median of all training prey coordinates" if saturation_scale is not None else None
+    if args.drift in LV_FOLLOWUP:
+        config.update(lv_initialization="match bilinear initial field at initial prey median",
+                      reference_prey=reference_prey, reference_prey_rule="median of time-0 training prey",
+                      carrying_capacity=carrying_capacity,
+                      carrying_capacity_rule="5 * maximum training prey" if carrying_capacity is not None else None,
+                      interaction_evaluation="(x / (1 + x / K)) * predator")
     out = args.output.resolve()
     epoch0 = 0
     if args.resume:
@@ -341,6 +445,7 @@ def run(args):
     else:
         out.mkdir(parents=True, exist_ok=False)
         write_json(out / "config.json", config)
+        save_checkpoint(out / "checkpoint_initial.pt", model, optimizer, 0, config, scheduler)
         save_checkpoint(out / "checkpoint.pt", model, optimizer, 0, config, scheduler)
     with (out / "invocations.jsonl").open("a") as f:
         f.write(json.dumps({"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -354,27 +459,39 @@ def run(args):
         torch.cuda.reset_peak_memory_stats()
     start = time.perf_counter()
     epoch_seconds = []
+    diagnostics = {"phase": "training_setup", "attempted_epoch": epoch0,
+                   "last_successful_epoch": epoch0, "optimizer_step_started": False,
+                   "optimizer_step_completed": False}
     try:
         with (out / "history.csv").open("a", newline="", buffering=1) as f:
             writer = csv.writer(f)
             if f.tell() == 0:
                 writer.writerow(HISTORY_FIELDS)
             for epoch in range(epoch0 + 1, args.epochs + 1):
+                diagnostics.update(attempted_epoch=epoch, optimizer_step_started=False,
+                                   optimizer_step_completed=False)
                 if args.device == "cuda":
                     torch.cuda.synchronize()
                 t0 = time.perf_counter()
                 lr_used = optimizer.param_groups[0]["lr"]
                 optimizer.zero_grad()
-                loss = objective(model, y0, times, xs, criterion, weights, bm, args.dt)
+                loss = objective(model, y0, times, xs, criterion, weights, bm, args.dt, diagnostics)
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Nonfinite loss at epoch %d" % epoch)
+                diagnostics["phase"] = "backward"
                 loss.backward()
+                diagnostics["phase"] = "gradient_norm"
                 norm = gradient_norm(params, args.gradclip)
+                diagnostics.update(phase="optimizer_step", optimizer_step_started=True)
                 optimizer.step()
+                diagnostics["optimizer_step_completed"] = True
                 if scheduler is not None:
+                    diagnostics["phase"] = "scheduler_step"
                     scheduler.step()
+                diagnostics["phase"] = "parameter_check"
                 if not all(torch.isfinite(p).all() for p in params):
                     raise FloatingPointError("Nonfinite parameters at epoch %d" % epoch)
+                diagnostics["last_successful_epoch"] = epoch
                 if args.device == "cuda":
                     torch.cuda.synchronize()
                 seconds = time.perf_counter() - t0
@@ -384,14 +501,20 @@ def run(args):
                     print("epoch=%d loss=%.7g lr=%.7g sigma_solver=%.7g seconds=%.3f" %
                           (epoch, loss, lr_used, sigma_solver(model), seconds), flush=True)
                 if epoch % args.checkpoint_every == 0 or epoch == args.epochs:
+                    diagnostics["phase"] = "checkpoint"
                     save_checkpoint(out / "checkpoint.pt", model, optimizer, epoch, config, scheduler)
         training_seconds = time.perf_counter() - start
         # A fresh Brownian tree with the same entropy also verifies end-of-fit fit,
         # rather than mislabeling the last pre-update loss as the final objective.
         with torch.no_grad():
+            begin_trajectory(diagnostics, "final_training_trajectory", times)
             ys = torchsde.sdeint(model, y0, times, method="euler", dt=args.dt,
                                 bm=make_brownian(y0, times, args.seed + 10000))
+            check_trajectory(ys, diagnostics)
+            diagnostics["phase"] = "final_training_loss"
             final_loss = sum(w * criterion(y, x) for w, y, x in zip(weights, ys, xs))
+            if not torch.isfinite(final_loss):
+                raise FloatingPointError("Nonfinite final post-update training loss")
         summary = {"epochs": args.epochs, "epochs_this_invocation": args.epochs - epoch0,
                    "training_seconds_this_invocation": training_seconds,
                    "median_epoch_seconds_after_5_warmup": float(np.median(epoch_seconds[5:])) if len(epoch_seconds) > 5 else None,
@@ -401,13 +524,15 @@ def run(args):
                    "sigma_physical_final": sigma_solver(model) / math.sqrt(scale),
                    "learning_rate_after_final_update": optimizer.param_groups[0]["lr"]}
         write_json(out / "training_summary.json", summary)
-        metrics = evaluate(model, path, interp_path, xs, scale, args.seed, args.dt, out)
+        metrics = evaluate(model, path, interp_path, xs, scale, args.seed, args.dt, out, diagnostics)
         summary["interp_mean_mmd2"] = float(np.mean([r["mmd2"] for r in metrics if r["protocol"] == "interp"]))
         write_json(out / "summary.json", summary)
         print(json.dumps(summary), flush=True)
     except Exception as error:
-        write_json(out / ("failure_%d.json" % time.time_ns()),
-                   {"type": type(error).__name__, "message": str(error)})
+        try:
+            save_failure(out, model, optimizer, config, scheduler, diagnostics, error)
+        except Exception as save_error:
+            print("Could not save failure diagnostics: " + repr(save_error), file=sys.stderr, flush=True)
         raise
 
 
@@ -423,7 +548,7 @@ def optional_clip(value):
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--task", choices=STEMS, required=True)
-    p.add_argument("--drift", choices=["structured", "mlp", "affine", "lv_saturated", "repr_exponential"], required=True)
+    p.add_argument("--drift", choices=["structured", "mlp"] + sorted(MISSPECIFIED), required=True)
     p.add_argument("--diffusion", choices=["fixed_true", "learned_state"], default="fixed_true")
     p.add_argument("--seed", type=int, required=True)
     p.add_argument("--output", type=Path, required=True)
@@ -451,7 +576,7 @@ def parse_args():
         p.error("cosine --min-lr must be smaller than --lr")
     if args.drift in MISSPECIFIED and args.diffusion != "learned_state":
         p.error("misspecified drifts require --diffusion learned_state")
-    if (args.drift == "lv_saturated" and args.task != "LV") or (args.drift == "repr_exponential" and args.task != "ReprParam"):
+    if (args.drift in LV_SATURATED and args.task != "LV") or (args.drift == "repr_exponential" and args.task != "ReprParam"):
         p.error("drift family is incompatible with --task")
     return args
 

@@ -99,6 +99,52 @@ The launcher rejects an epoch override with the default full-fit stage. Do not
 select hyperparameters using smoke evaluation metrics. Inspect jobs with
 `sacct -X -j <array-job-id> --format=JobID%24,State,Elapsed,ExitCode`.
 
+## Calibrated saturated LV follow-up
+
+Two additional LV modes retain four learned positive drift rates and the same
+learned scalar state-dependent diffusion. Both use fixed
+`K = median(training prey)` and `x_ref = median(time-0 prey)`. Their initial beta
+and delta are the original guesses multiplied by `1+x_ref/K`; this matches the
+bilinear initial interaction at x_ref without using generator coefficients.
+
+| Array ID | Drift | Prey growth |
+|---|---|---|
+| 0 | `lv_saturated_calibrated` | `alpha*x`, initial alpha=0.5 |
+| 1 | `lv_logistic_saturated` | `alpha*x*(1-x/C)`, fixed `C=5*max(training prey)` |
+
+The logistic mode initializes alpha to `0.5/(1-x_ref/C)`, matching the other
+mode's initial prey growth at x_ref. Rates are converted to solver time; K,
+x_ref and C are state scales. Constants and rules are saved in config, and the
+buffers are checkpointed. Both new modes evaluate the interaction as
+`(x/(1+x/K))*y`, avoiding an unnecessary potentially overflowing `x*y`.
+The original `lv_saturated` mode preserves its original initialization and
+evaluation order. Logistic growth does not clamp states or guarantee numerical
+stability. All raw predictions and failed outcomes should be retained.
+
+After pulling the reviewed release, submit from the repository root using the
+existing CUDA environment (no dependency changes):
+
+```bash
+git pull --ff-only
+export SNAPMMD_EXPECT_COMMIT="FULL_REVIEWED_COMMIT_HASH"
+test "$(git rev-parse HEAD)" = "$SNAPMMD_EXPECT_COMMIT"
+sbatch --export=ALL,SNAPMMD_EXPECT_COMMIT,SNAPMMD_EPOCHS=1000,SNAPMMD_STAGE=lv-saturation-followup-full-gpu \
+  reproduction/fit/drift_only/rusty_lv_saturation_followup_gpu.sbatch
+```
+
+This submits **two simultaneous H100 tasks**, one CPU core and 8 GB RAM each,
+with two hours per task (four GPU-hours maximum). Both use seed 1, lr 0.01,
+1,000 epochs, clipping 1, float32, dt 0.001 and the existing evaluation. Each
+task rechecks the pinned source and CUDA availability. Keep the checkout fixed
+while the jobs are pending/running. New modes require new output directories;
+they do not resume earlier saturated-LV checkpoints.
+
+Outputs: `/mnt/ceph/users/$USER/snapmmd-runs/lv-saturation-followup-full-gpu/<array-job-id>/`,
+with `LV_lv_saturated_calibrated_s1/` and `LV_lv_logistic_saturated_s1/`.
+Logs: `slurm-lv-saturation-<array-job-id>_<array-id>.out` in the submit directory.
+Collect both directories and logs, including any failure artifacts. Inspect
+states with `sacct -X -j <array-job-id> --format=JobID%24,State,Elapsed,ExitCode`.
+
 ## Original comparison with fixed diffusion
 
 Two models fit the same released LV or repressilator snapshots with the same
@@ -338,12 +384,22 @@ Each fit saves:
 - `invocations.jsonl`: command, Git commit/status, host, job ID and requested epochs.
 - `history.csv`: pre-update loss, unclipped gradient norm and seconds per epoch.
 - `checkpoint.pt`: model and optimizer, every 25 epochs and on completion.
+- `checkpoint_initial.pt`: immutable initial model and optimizer for new runs.
 - `predictions.npz`, `metrics.csv`: held-out forecasts from both the first and
   last training snapshots, interpolation at the nine exact target times, and
   last-snapshot persistence. MMD² and W2 reuse the released evaluation functions.
 - `summary.json`: completion marker, final post-update training loss, timing
   median after five warmup epochs, and GPU peak allocated memory when applicable.
-- `failure_*.json`: exceptions, retained even if a later restart succeeds.
+- `failure_*.json`: exceptions, attempted epoch, last successful epoch, failure
+  phase and available trajectory ranges, retained after any restart.
+- `failure_*.pt`: diagnostic model/optimizer/gradient snapshot at the failure;
+  never an automatic resume target. Step-started/completed flags distinguish a
+  pre-update failure from an interrupted or nonfinite update. These files omit
+  the normal checkpoint's `epoch` key to avoid mislabeling the failed state.
+- `failure_*_trajectory.npz`: returned trajectory at failure when available.
+  The metadata identifies its times/units and the parameter epoch that produced
+  it; for a gradient/update failure it is the preceding forward trajectory.
+  A solver exception may prevent a trajectory from being returned at all.
 
 Evaluation uses separate noise streams from training, paired between the arms.
 Forecast/interpolation targets are read only after fitting for scoring.

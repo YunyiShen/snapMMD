@@ -1,6 +1,8 @@
 """Small numerical checks for the controlled comparison; no scientific refits."""
 import ast
 import copy
+from contextlib import nullcontext
+import json
 import math
 import os
 from pathlib import Path
@@ -372,6 +374,7 @@ class Invariants(unittest.TestCase):
             np.savez(changed, **data)
             other, _, _ = train.load_training(changed)
         self.assertEqual(k, train.training_saturation_scale(other))
+        self.assertEqual(train.training_lv_followup_scales(xs), train.training_lv_followup_scales(other))
         for bad in [torch.zeros_like(xs), torch.full_like(xs, float("nan"))]:
             with self.assertRaises(ValueError):
                 train.training_saturation_scale(bad)
@@ -384,8 +387,13 @@ class Invariants(unittest.TestCase):
 
     def test_new_family_gradients_and_checkpoint_resume(self):
         for task, arm, dim, scale in [("LV", "affine", 2, 9.), ("ReprParam", "affine", 3, 10.),
-                                       ("LV", "lv_saturated", 2, 9.), ("ReprParam", "repr_exponential", 3, 10.)]:
-            kwargs = {"saturation_scale": 1.5} if arm == "lv_saturated" else {}
+                                       ("LV", "lv_saturated", 2, 9.), ("ReprParam", "repr_exponential", 3, 10.),
+                                       ("LV", "lv_saturated_calibrated", 2, 9.), ("LV", "lv_logistic_saturated", 2, 9.)]:
+            kwargs = {"saturation_scale": 1.5} if arm in train.LV_SATURATED else {}
+            if arm in train.LV_FOLLOWUP:
+                kwargs["reference_prey"] = 1.3
+            if arm == "lv_logistic_saturated":
+                kwargs["carrying_capacity"] = 10.
             torch.manual_seed(41)
             xs = torch.rand(3, 6, dim) + .4
             times = torch.tensor([0., .002, .004])
@@ -419,8 +427,189 @@ class Invariants(unittest.TestCase):
             step(restored, opt2)
             for name, value in model.state_dict().items():
                 torch.testing.assert_close(value, restored.state_dict()[name], rtol=0, atol=0)
-            if arm == "lv_saturated":
+            if arm in train.LV_SATURATED:
                 self.assertEqual(float(model.drift.saturation_scale), 1.5)
+
+    def test_calibrated_lv_initialization_and_formulas(self):
+        xs, _, scale = train.load_training(train.REPO / "data/classic/LV_data.npz")
+        k, ref, capacity = train.training_lv_followup_scales(xs)
+        self.assertEqual(k, float(np.median(xs[..., 0].numpy())))
+        self.assertEqual(ref, float(np.median(xs[0, :, 0].numpy())))
+        self.assertEqual(capacity, 5 * float(xs[..., 0].max()))
+        classic = train.make_model("LV", "structured", scale, 1, "learned_state").double()
+        at_ref = torch.tensor([[ref, 1.], [ref, 4.]], dtype=torch.float64)
+        for arm in sorted(train.LV_FOLLOWUP):
+            c = capacity if arm == "lv_logistic_saturated" else None
+            kwargs = dict(saturation_scale=k, reference_prey=ref, carrying_capacity=c)
+            model = train.make_model("LV", arm, scale, 1, "learned_state", **kwargs).double()
+            self.assertEqual(sum(p.numel() for p in model.parameters()), 5)
+            self.assertEqual(set(dict(model.drift.named_parameters())), {"alpha", "beta", "gamma", "delta"})
+            torch.testing.assert_close(model.f(0., at_ref), classic.f(0., at_ref), rtol=5e-7, atol=5e-7)
+            torch.testing.assert_close(model.g(0., at_ref), classic.g(0., at_ref), rtol=0, atol=0)
+            values = torch.tensor([[.3, 1.2], [2., .7], [-1., 0.]], dtype=torch.float64)
+            z = values.numpy().clip(0) + 1e-10
+            a, b, g, d = [float(getattr(model.drift, name).exp()) for name in ("alpha", "beta", "gamma", "delta")]
+            qy = z[:, 0] * z[:, 1] / (1 + z[:, 0]/k)
+            growth = a * z[:, 0] * (1 if c is None else 1-z[:, 0]/float(model.drift.carrying_capacity))
+            expected = np.column_stack([growth-b*qy, d*qy-g*z[:, 1]])
+            np.testing.assert_allclose(model.f(0., values).detach(), expected, rtol=1e-14)
+            other = train.make_model("LV", arm, 2*scale, 1, "learned_state", **kwargs).double()
+            torch.testing.assert_close(model.f(0., values)/scale, other.f(0., values)/(2*scale), rtol=3e-7, atol=1e-8)
+            if c is not None:
+                high_prey = torch.tensor([[2*c, 1.]], dtype=torch.float64)
+                self.assertLess(float(model.f(0., high_prey)[0, 0]), 0.)
+        for arm, ref_value, c in [("lv_saturated_calibrated", None, None),
+                                  ("lv_logistic_saturated", ref, None),
+                                  ("lv_saturated_calibrated", ref, capacity),
+                                  ("lv_saturated", ref, None),
+                                  ("lv_logistic_saturated", ref, ref),
+                                  ("lv_logistic_saturated", ref, float("inf"))]:
+            with self.assertRaises(ValueError):
+                train.make_model("LV", arm, scale, 1, "learned_state", k, ref_value, c)
+
+    def test_saturated_interaction_reordering(self):
+        old = train.SaturatingLV(3.).double()
+        new = train.SaturatingLV(3., reference_prey=2.).double()
+        with torch.no_grad():
+            for name, value in old.named_parameters():
+                getattr(new, name).copy_(value)
+        values = torch.tensor([[.3, 1.2], [2., .7]], dtype=torch.float64, requires_grad=True)
+        outputs, gradients = [], []
+        for model in (old, new):
+            result = model(values)
+            outputs.append(result)
+            gradients.append(torch.autograd.grad(result.sum(), (values,) + tuple(model.parameters())))
+        torch.testing.assert_close(outputs[0], outputs[1], rtol=1e-14, atol=1e-14)
+        for a, b in zip(*gradients):
+            torch.testing.assert_close(a, b, rtol=1e-14, atol=1e-14)
+        large = torch.tensor([[1e20, 1e20]], dtype=torch.float32)
+        self.assertFalse(torch.isfinite(old.float()(large)).all())
+        self.assertTrue(torch.isfinite(new.float()(large)).all())
+
+    def test_failure_snapshot_preserves_last_checkpoint(self):
+        model = train.make_model("LV", "lv_saturated_calibrated", 9., 1, "learned_state", 3., 2.)
+        opt = torch.optim.Adam(model.parameters(), lr=.01)
+        states = torch.tensor([[[1., 2.], [3., 4.]],
+                               [[float("nan"), float("inf")], [1e20, -2.]]])
+        context = dict(phase="training_loss", attempted_epoch=428, last_successful_epoch=427,
+                       optimizer_step_started=False, optimizer_step_completed=False,
+                       trajectory_model_epoch=427, trajectory_time_units="solver",
+                       _trajectory=states, _trajectory_times=torch.tensor([0., 1.]))
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            train.save_checkpoint(out/"checkpoint.pt", model, opt, 425, {})
+            previous = (out/"checkpoint.pt").read_bytes()
+            with torch.no_grad():
+                model.drift.alpha.add_(.1)
+            train.save_failure(out, model, opt, {}, None, context, FloatingPointError("bad loss"))
+            self.assertEqual(previous, (out/"checkpoint.pt").read_bytes())
+            record = json.loads(next(out.glob("failure_*.json")).read_text())
+            self.assertEqual(record["diagnostic_errors"], [])
+            self.assertEqual(record["trajectory_ranges"][1]["nonfinite_entries"], 2)
+            self.assertEqual(record["trajectory_ranges"][1]["finite_coordinate_min"], [float(states[1, 1, 0]), -2.])
+            state = torch.load(out/record["failure_checkpoint"])
+            self.assertTrue(state["diagnostic_only"])
+            self.assertNotIn("epoch", state)
+            self.assertEqual(state["failure_context"]["last_successful_epoch"], 427)
+            torch.testing.assert_close(state["model"]["drift.alpha"], model.drift.alpha)
+            with np.load(out/record["trajectory_artifact"]) as z:
+                np.testing.assert_equal(z["states"], states.numpy())
+
+    def test_training_failure_phases_and_artifacts(self):
+        xs = torch.ones(2, 3, 2)
+        times = torch.tensor([0., .001])
+        context = {}
+        with patch.object(train.torchsde, "sdeint_adjoint", return_value=xs*float("inf")):
+            with self.assertRaises(FloatingPointError):
+                train.objective(None, xs[0], times, xs, None, None, None, .001, context)
+        self.assertEqual(context["phase"], "training_trajectory")
+        with tempfile.TemporaryDirectory() as directory:
+            for phase in ("training_loss", "gradient_norm", "parameter_check"):
+                out = Path(directory)/phase
+                argv = ["train.py", "--task", "LV", "--drift", "lv_saturated_calibrated", "--diffusion",
+                        "learned_state", "--seed", "1", "--epochs", "1", "--lr", ".01", "--output", str(out)]
+                with patch("sys.argv", argv):
+                    args = train.parse_args()
+                def fake_objective(model, y0, ts, observed, criterion, weights, bm, dt, diagnostics):
+                    train.begin_trajectory(diagnostics, "training_loss", ts)
+                    diagnostics["_trajectory"] = observed.detach()
+                    return torch.tensor(float("nan")) if phase == "training_loss" else model.sigma.square()
+                def bad_update(optimizer):
+                    with torch.no_grad():
+                        optimizer.param_groups[0]["params"][0].fill_(float("nan"))
+                injection = (patch.object(train, "gradient_norm", side_effect=RuntimeError("injected gradient failure"))
+                             if phase == "gradient_norm" else
+                             patch.object(torch.optim.Adam, "step", new=bad_update)
+                             if phase == "parameter_check" else nullcontext())
+                with patch.object(train, "objective", side_effect=fake_objective), injection, \
+                        patch.object(torch, "set_num_interop_threads"), self.assertRaises((FloatingPointError, RuntimeError)):
+                    train.run(args)
+                record = json.loads(next(out.glob("failure_*.json")).read_text())
+                self.assertEqual((record["phase"], record["attempted_epoch"], record["last_successful_epoch"]), (phase, 1, 0))
+                self.assertEqual(record["optimizer_step_started"], phase == "parameter_check")
+                self.assertEqual(record["optimizer_step_completed"], phase == "parameter_check")
+                self.assertTrue((out/"checkpoint_initial.pt").exists())
+                saved = torch.load(out/"checkpoint.pt")
+                self.assertEqual(saved["epoch"], 0)
+                self.assertTrue(all(torch.isfinite(v).all() for v in saved["model"].values()))
+                failed = torch.load(out/record["failure_checkpoint"])
+                self.assertEqual(bool(torch.isfinite(failed["model"]["sigma"])), phase != "parameter_check")
+                self.assertTrue((out/record["trajectory_artifact"]).exists())
+                self.assertFalse((out/"summary.json").exists())
+
+    def test_metric_failure_records_the_matching_cloud(self):
+        path = train.REPO/"data/classic/LV_data.npz"
+        xs, _, scale = train.load_training(path)
+        context = {"last_successful_epoch": 1000}
+        def fake_solve(model, initial, times, **kwargs):
+            return torch.stack([initial*(1+float(t)) for t in times])
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            with patch.object(train.torchsde, "sdeint", side_effect=fake_solve), \
+                    patch.object(train, "mmd2", return_value={"snap": float("nan")}), \
+                    patch.object(train, "emd", return_value=0.), self.assertRaises(FloatingPointError):
+                train.evaluate(None, path, path.with_name("LV_data_interp_val.npz"), xs, scale, 1, .001, out, context)
+            self.assertEqual(context["phase"], "evaluation_forecast_first_metrics")
+            with np.load(out/"predictions.partial.npz") as z:
+                np.testing.assert_equal(context["_trajectory"][0].numpy(), z["forecast_first"])
+            self.assertFalse((out/"summary.json").exists())
+
+    def test_lv_followup_launcher(self):
+        launcher = Path(train.__file__).with_name("rusty_lv_saturation_followup_gpu.sbatch")
+        self.assertIn("#SBATCH --array=0-1%2", launcher.read_text())
+        env = dict(os.environ, SNAPMMD_REPO=str(train.REPO), SNAPMMD_DRY_RUN="1", SLURM_ARRAY_JOB_ID="123")
+        for key in ("SNAPMMD_STAGE", "SNAPMMD_EPOCHS", "SNAPMMD_EXPECT_COMMIT"):
+            env.pop(key, None)
+        outputs = []
+        for index, arm in enumerate(("lv_saturated_calibrated", "lv_logistic_saturated")):
+            result = subprocess.run(["bash", str(launcher)], env=dict(env, SLURM_ARRAY_TASK_ID=str(index)),
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            command = shlex.split(result.stdout)
+            options = dict(zip(command[2::2], command[3::2]))
+            for key, value in [("--task", "LV"), ("--drift", arm), ("--lr", "0.01"), ("--epochs", "1000"),
+                               ("--seed", "1"), ("--diffusion", "learned_state"), ("--gradclip", "1.0"),
+                               ("--schedule", "constant"), ("--threads", "1"), ("--device", "cuda")]:
+                self.assertEqual(options[key], value)
+            self.assertIn("/lv-saturation-followup-full-gpu/123/", options["--output"])
+            outputs.append(options["--output"])
+            with patch("sys.argv", ["train.py"] + command[2:]):
+                self.assertEqual(train.parse_args().drift, arm)
+        self.assertEqual(len(set(outputs)), 2)
+        for changes in [{"SLURM_ARRAY_TASK_ID": "2"}, {"SLURM_ARRAY_TASK_ID": "-1"},
+                        {"SLURM_ARRAY_TASK_ID": "0", "SNAPMMD_EPOCHS": "8"},
+                        {"SLURM_ARRAY_TASK_ID": "0", "SNAPMMD_STAGE": "../other"},
+                        {"SLURM_ARRAY_TASK_ID": "0", "SNAPMMD_EPOCHS": "0"}]:
+            result = subprocess.run(["bash", str(launcher)], env=dict(env, **changes), capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+        smoke = subprocess.run(["bash", str(launcher)],
+                               env=dict(env, SLURM_ARRAY_TASK_ID="0", SNAPMMD_EPOCHS="8", SNAPMMD_STAGE="lv-saturation-smoke"),
+                               text=True, capture_output=True, check=True)
+        self.assertIn("--epochs 8", smoke.stdout)
+        mismatch = subprocess.run(["bash", str(launcher)],
+                                  env=dict(env, SLURM_ARRAY_TASK_ID="0", SNAPMMD_DRY_RUN="0", SNAPMMD_EXPECT_COMMIT="0"*40),
+                                  text=True, capture_output=True)
+        self.assertNotEqual(mismatch.returncode, 0)
+        self.assertIn("Checkout changed", mismatch.stderr)
 
 
 if __name__ == "__main__":
